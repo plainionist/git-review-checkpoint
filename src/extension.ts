@@ -516,21 +516,6 @@ class ReviewCheckpointController implements vscode.Disposable {
     }
 
     if (state.status === "missing-checkpoint") {
-      const shortHash = toShortHash(targetCommitHash);
-      const choice = await vscode.window.showWarningMessage(
-        `Create ${APPROVED_REF} at ${shortHash}?`,
-        {
-          modal: true,
-          detail:
-            "This creates the approved marker and marks all commits up to this commit as approved."
-        },
-        "Approve"
-      );
-
-      if (choice !== "Approve") {
-        return;
-      }
-
       await this.validateCommitOnMaster(state.repositoryPath, targetCommitHash);
       await updateApprovedRef(state.repositoryPath, targetCommitHash);
       this.diffWebview.close();
@@ -543,21 +528,6 @@ class ReviewCheckpointController implements vscode.Disposable {
       vscode.window.showErrorMessage(
         state.message ?? "Review Checkpoint is not ready."
       );
-      return;
-    }
-
-    const shortHash = toShortHash(targetCommitHash);
-    const choice = await vscode.window.showWarningMessage(
-      `Move ${APPROVED_REF} to ${shortHash}?`,
-      {
-        modal: true,
-        detail:
-          "This marks all commits up to this commit as approved."
-      },
-      "Approve"
-    );
-
-    if (choice !== "Approve") {
       return;
     }
 
