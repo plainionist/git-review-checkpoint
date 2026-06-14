@@ -21,6 +21,19 @@ export class CommitTreeItem extends vscode.TreeItem {
   }
 }
 
+class ApprovedCommitTreeItem extends vscode.TreeItem {
+  public constructor(commit: PendingCommit) {
+    super(`${commit.shortHash}  ${commit.subject}`, vscode.TreeItemCollapsibleState.None);
+    this.description = "approved";
+    this.tooltip = `${commit.hash}\n${commit.author} • ${commit.date}\n${commit.subject}`;
+    this.iconPath = new vscode.ThemeIcon(
+      "pass",
+      new vscode.ThemeColor("testing.iconPassed")
+    );
+    this.contextValue = "approvedCommit";
+  }
+}
+
 class StaticTreeItem extends vscode.TreeItem {
   public constructor(
     label: string,
@@ -94,6 +107,13 @@ export class ReviewTreeDataProvider
         })
       );
 
+      if (this.state.pendingCommits.length > 0 || this.state.approvedEntry) {
+        items.push(new SpacerTreeItem());
+      }
+    }
+
+    if (this.state.approvedEntry) {
+      items.push(new ApprovedCommitTreeItem(this.state.approvedEntry));
       if (this.state.pendingCommits.length > 0) {
         items.push(new SpacerTreeItem());
       }

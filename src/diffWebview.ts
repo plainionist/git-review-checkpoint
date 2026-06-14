@@ -285,7 +285,7 @@ function renderModeButton(
   mode: DiffRenderMode,
   activeMode: DiffRenderMode
 ): string {
-  return `<button id="${id}" class="${mode === activeMode ? "active" : ""}">${label}</button>`;
+  return `<button type="button" id="${id}" data-mode="${mode}" class="${mode === activeMode ? "active" : ""}">${label}</button>`;
 }
 
 export class DiffWebviewController implements vscode.Disposable {
@@ -373,7 +373,7 @@ export class DiffWebviewController implements vscode.Disposable {
       : "";
     const approveButton =
       state.status !== "error"
-        ? '<button class="approve" id="approve">Approve</button>'
+        ? '<button type="button" class="approve" data-command="approve">Approve</button>'
         : "";
 
     const body =
@@ -587,20 +587,28 @@ export class DiffWebviewController implements vscode.Disposable {
   ${body}
   <script nonce="${scriptNonce}">
     const vscodeApi = acquireVsCodeApi();
-    document.getElementById("approve")?.addEventListener("click", () => {
-      vscodeApi.postMessage({
-        command: "approve",
-        commitHash: ${JSON.stringify(selectedCommit.hash)}
-      });
-    });
-    document.getElementById("mode-inline")?.addEventListener("click", () => {
-      vscodeApi.postMessage({ command: "setMode", mode: "inline" });
-    });
-    document.getElementById("mode-full")?.addEventListener("click", () => {
-      vscodeApi.postMessage({ command: "setMode", mode: "sideBySideFull" });
-    });
-    document.getElementById("mode-compact")?.addEventListener("click", () => {
-      vscodeApi.postMessage({ command: "setMode", mode: "sideBySideCompact" });
+    document.addEventListener("click", (event) => {
+      const target = event.target;
+      if (!(target instanceof HTMLElement)) {
+        return;
+      }
+
+      const button = target.closest("button");
+      if (!(button instanceof HTMLButtonElement)) {
+        return;
+      }
+
+      const command = button.dataset.command;
+      const mode = button.dataset.mode;
+
+      if (command === "approve") {
+        vscodeApi.postMessage({
+          command: "approve",
+          commitHash: ${JSON.stringify(selectedCommit.hash)}
+        });
+      } else if (mode) {
+        vscodeApi.postMessage({ command: "setMode", mode });
+      }
     });
   </script>
 </body>

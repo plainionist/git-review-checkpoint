@@ -4,6 +4,7 @@ import {
   GitCommandError,
   INITIAL_COMMIT_PREVIEW_COUNT,
   PendingCommit,
+  getCommitDetails,
   getParentCommit,
   getMasterCommit,
   getRepositoryRoot,
@@ -24,6 +25,7 @@ export interface ReviewState {
   masterShortHash?: string;
   approvedCommit?: string;
   approvedShortHash?: string;
+  approvedEntry?: PendingCommit;
   comparisonBaseRef?: string;
   comparisonBaseShortHash?: string;
   pendingCommits: PendingCommit[];
@@ -140,6 +142,7 @@ export async function loadReviewState(
   }
 
   const approvedShortHash = toShortHash(approvedCommit);
+  const approvedEntry = await getCommitDetails(repositoryPath, approvedCommit);
   const pendingCommits = await listPendingCommits(repositoryPath);
   const selectedCommit =
     pendingCommits.find((commit) => commit.hash === selectedCommitHash) ??
@@ -155,6 +158,7 @@ export async function loadReviewState(
     masterShortHash,
     approvedCommit,
     approvedShortHash,
+    approvedEntry,
     comparisonBaseRef: approvedCommit,
     comparisonBaseShortHash: approvedShortHash,
     pendingCommits,

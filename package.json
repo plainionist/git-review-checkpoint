@@ -89,18 +89,6 @@
           "when": "view == reviewCheckpointView",
           "group": "navigation@1"
         }
-      ],
-      "view/item/context": [
-        {
-          "command": "reviewCheckpoint.showReviewDiff",
-          "when": "view == reviewCheckpointView && viewItem == pendingCommit",
-          "group": "inline"
-        },
-        {
-          "command": "reviewCheckpoint.approveSelectedCommit",
-          "when": "view == reviewCheckpointView && viewItem == pendingCommit",
-          "group": "inline"
-        }
       ]
     }
   },

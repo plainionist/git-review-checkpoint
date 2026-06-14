@@ -140,6 +140,21 @@ export async function getApprovedCommit(
   return resolveCommit(repositoryPath, APPROVED_REF);
 }
 
+export async function getCommitDetails(
+  repositoryPath: string,
+  commit: string
+): Promise<PendingCommit> {
+  const output = await runGit(repositoryPath, [
+    "show",
+    "-s",
+    "--date=short",
+    "--pretty=format:%H%x09%h%x09%ad%x09%an%x09%s",
+    commit
+  ]);
+
+  return parseCommitLine(output);
+}
+
 export async function getParentCommit(
   repositoryPath: string,
   commit: string
