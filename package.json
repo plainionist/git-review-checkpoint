@@ -1,0 +1,126 @@
+{
+  "name": "git-review-checkpoint",
+  "displayName": "Git Review Checkpoint",
+  "description": "A lightweight VS Code review board backed by a Git approved marker ref.",
+  "version": "0.1.0",
+  "publisher": "plainionist",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onView:reviewCheckpointView",
+    "onCommand:reviewCheckpoint.refresh",
+    "onCommand:reviewCheckpoint.initializeCheckpoint",
+    "onCommand:reviewCheckpoint.showPendingCommits",
+    "onCommand:reviewCheckpoint.showReviewDiff",
+    "onCommand:reviewCheckpoint.openSideBySideDiff",
+    "onCommand:reviewCheckpoint.approveSelectedCommit"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "reviewCheckpoint",
+          "title": "Review Checkpoint",
+          "icon": "resources/review-checkpoint.svg"
+        }
+      ]
+    },
+    "views": {
+      "reviewCheckpoint": [
+        {
+          "id": "reviewCheckpointView",
+          "name": "Review Checkpoint"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "reviewCheckpoint.refresh",
+        "title": "Review Checkpoint: Refresh",
+        "category": "Review Checkpoint"
+      },
+      {
+        "command": "reviewCheckpoint.initializeCheckpoint",
+        "title": "Review Checkpoint: Initialize Checkpoint",
+        "category": "Review Checkpoint"
+      },
+      {
+        "command": "reviewCheckpoint.showPendingCommits",
+        "title": "Review Checkpoint: Show Pending Commits",
+        "category": "Review Checkpoint"
+      },
+      {
+        "command": "reviewCheckpoint.showReviewDiff",
+        "title": "Review Checkpoint: Show Review Diff",
+        "category": "Review Checkpoint"
+      },
+      {
+        "command": "reviewCheckpoint.openSideBySideDiff",
+        "title": "Review Checkpoint: Open Side-by-Side Diff",
+        "category": "Review Checkpoint"
+      },
+      {
+        "command": "reviewCheckpoint.approveSelectedCommit",
+        "title": "Review Checkpoint: Approve Selected Commit",
+        "category": "Review Checkpoint"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "reviewCheckpoint.refresh",
+          "when": "view == reviewCheckpointView",
+          "group": "navigation@1"
+        },
+        {
+          "command": "reviewCheckpoint.initializeCheckpoint",
+          "when": "view == reviewCheckpointView",
+          "group": "navigation@2"
+        },
+        {
+          "command": "reviewCheckpoint.showReviewDiff",
+          "when": "view == reviewCheckpointView",
+          "group": "navigation@3"
+        },
+        {
+          "command": "reviewCheckpoint.approveSelectedCommit",
+          "when": "view == reviewCheckpointView",
+          "group": "navigation@4"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "reviewCheckpoint.openSideBySideDiff",
+          "when": "view == reviewCheckpointView && viewItem == changedFile",
+          "group": "inline"
+        },
+        {
+          "command": "reviewCheckpoint.showReviewDiff",
+          "when": "view == reviewCheckpointView && viewItem == pendingCommit",
+          "group": "inline"
+        },
+        {
+          "command": "reviewCheckpoint.approveSelectedCommit",
+          "when": "view == reviewCheckpointView && viewItem == pendingCommit",
+          "group": "inline"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -w -p ./",
+    "vscode:prepublish": "npm run compile"
+  },
+  "devDependencies": {
+    "@types/node": "20.16.5",
+    "@types/vscode": "1.90.0",
+    "typescript": "5.6.2"
+  }
+}
