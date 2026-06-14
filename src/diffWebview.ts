@@ -43,51 +43,44 @@ function nonce(): string {
 }
 
 function renderInlineDiff(diff: string): string {
-  if (!diff.trim()) {
+  const files = parseCompactDiff(diff);
+  if (files.length === 0) {
     return `<div class="empty">No changed hunks in the selected review range.</div>`;
   }
 
-  const lines = diff.replace(/\r/g, "").split("\n");
-  const chunks: string[] = [];
-  let inBlock = false;
+  return files
+    .map((file) => {
+      const metadata = file.metadata.length > 0
+        ? `<div class="meta-block">${file.metadata
+            .map((line) => `<div>${escapeHtml(line)}</div>`)
+            .join("")}</div>`
+        : "";
 
-  for (const line of lines) {
-    if (line.startsWith("diff --git ")) {
-      if (inBlock) {
-        chunks.push("</pre></section>");
-      }
-      chunks.push('<section class="file"><pre>');
-      inBlock = true;
-    }
+      const lines = file.rows
+        .map((row) => {
+          if (row.kind === "hunk") {
+            return `<span class="line hunk">${escapeHtml(row.text ?? "")}</span>`;
+          }
 
-    const cssClass = line.startsWith("diff --git ")
-      ? "file-header"
-      : line.startsWith("@@")
-        ? "hunk"
-        : line.startsWith("+++ ") || line.startsWith("--- ")
-          ? "path"
-          : line.startsWith("+") && !line.startsWith("+++ ")
-            ? "add"
-            : line.startsWith("-") && !line.startsWith("--- ")
-              ? "delete"
-              : line.startsWith("index ") ||
-                  line.startsWith("rename from ") ||
-                  line.startsWith("rename to ") ||
-                  line.startsWith("new file mode ") ||
-                  line.startsWith("deleted file mode ")
-                ? "meta"
-                : "context";
+          if (row.leftClass === "delete") {
+            return `<span class="line delete">-${escapeHtml(row.leftText ?? "")}</span>`;
+          }
 
-    chunks.push(
-      `<span class="line ${cssClass}">${escapeHtml(line === "" ? " " : line)}</span>`
-    );
-  }
+          if (row.rightClass === "add") {
+            return `<span class="line add">+${escapeHtml(row.rightText ?? "")}</span>`;
+          }
 
-  if (inBlock) {
-    chunks.push("</pre></section>");
-  }
+          return `<span class="line context"> ${escapeHtml(row.leftText ?? "")}</span>`;
+        })
+        .join("");
 
-  return chunks.join("");
+      return `<section class="file">
+  <div class="file-title">${escapeHtml(file.title)}</div>
+  ${metadata}
+  <pre>${lines}</pre>
+</section>`;
+    })
+    .join("");
 }
 
 function parseCompactDiff(diff: string): ParsedCompactFile[] {

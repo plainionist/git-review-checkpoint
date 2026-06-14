@@ -112,14 +112,22 @@ export class ReviewTreeDataProvider
       }
     }
 
+    const historyItems: vscode.TreeItem[] = [
+      ...this.state.pendingCommits.map(
+        (commit) =>
+          new CommitTreeItem(
+            commit,
+            this.state.selectedCommit?.hash === commit.hash,
+            this.state.status === "ready" ? "pendingCommit" : "recentCommit"
+          )
+      )
+    ];
+
     if (this.state.approvedEntry) {
-      items.push(new ApprovedCommitTreeItem(this.state.approvedEntry));
-      if (this.state.pendingCommits.length > 0) {
-        items.push(new SpacerTreeItem());
-      }
+      historyItems.push(new ApprovedCommitTreeItem(this.state.approvedEntry));
     }
 
-    if (this.state.pendingCommits.length === 0) {
+    if (historyItems.length === 0) {
       return items.length > 0
         ? items
         : [
@@ -129,16 +137,7 @@ export class ReviewTreeDataProvider
           ];
     }
 
-    items.push(
-      ...this.state.pendingCommits.map(
-        (commit) =>
-          new CommitTreeItem(
-            commit,
-            this.state.selectedCommit?.hash === commit.hash,
-            this.state.status === "ready" ? "pendingCommit" : "recentCommit"
-          )
-      )
-    );
+    items.push(...historyItems);
 
     return items;
   }

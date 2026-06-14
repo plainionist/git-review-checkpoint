@@ -43,6 +43,12 @@ interface GitRepositoryApi {
   };
 }
 
+interface ReviewDiffCache {
+  key: string;
+  compactDiff?: string;
+  fullFiles?: FullDiffFile[];
+}
+
 function buildCompactFilePreview(diff: string): { left: string; right: string } {
   const left: string[] = [];
   const right: string[] = [];
@@ -105,6 +111,7 @@ class ReviewCheckpointController implements vscode.Disposable {
   private gitRefreshSubscription?: vscode.Disposable;
   private selectedCommitHash?: string;
   private diffRenderMode: DiffRenderMode = "inline";
+  private diffCache?: ReviewDiffCache;
 
   public constructor(private readonly context: vscode.ExtensionContext) {
     this.treeView = vscode.window.createTreeView("reviewCheckpointView", {
@@ -254,6 +261,7 @@ class ReviewCheckpointController implements vscode.Disposable {
     try {
       const state = await loadReviewState(workspacePath, this.selectedCommitHash);
       this.selectedCommitHash = state.selectedCommit?.hash;
+      this.invalidateDiffCacheIfNeeded(state);
       this.provider.setState(state);
       this.treeView.message = undefined;
     } catch (error) {
@@ -570,20 +578,30 @@ class ReviewCheckpointController implements vscode.Disposable {
       };
     }
 
+    const cache = this.getDiffCache(state);
+
     if (this.diffRenderMode === "sideBySideFull") {
+      if (!cache.fullFiles) {
+        cache.fullFiles = await this.loadFullDiffFiles(state);
+      }
+
       return {
         mode: this.diffRenderMode,
-        fullFiles: await this.loadFullDiffFiles(state)
+        fullFiles: cache.fullFiles
       };
+    }
+
+    if (!cache.compactDiff) {
+      cache.compactDiff = await getCompactDiff(
+        state.repositoryPath,
+        state.comparisonBaseRef,
+        state.selectedCommit.hash
+      );
     }
 
     return {
       mode: this.diffRenderMode,
-      diffText: await getCompactDiff(
-        state.repositoryPath,
-        state.comparisonBaseRef,
-        state.selectedCommit.hash
-      )
+      diffText: cache.compactDiff
     };
   }
 
@@ -603,22 +621,22 @@ class ReviewCheckpointController implements vscode.Disposable {
             ? changedFile.oldPath ?? changedFile.path
             : changedFile.newPath ?? changedFile.path;
 
-        const leftContent =
+        const [leftContent, rightContent] = await Promise.all([
           changedFile.statusCode === "A"
-            ? ""
-            : await readFileAtRevision(
+            ? Promise.resolve("")
+            : readFileAtRevision(
                 state.repositoryPath as string,
                 state.comparisonBaseRef as string,
                 leftPath
-              );
-        const rightContent =
+              ),
           changedFile.statusCode === "D"
-            ? ""
-            : await readFileAtRevision(
+            ? Promise.resolve("")
+            : readFileAtRevision(
                 state.repositoryPath as string,
                 state.selectedCommit!.hash,
                 rightPath
-              );
+              )
+        ]);
 
         return {
           displayPath: changedFile.displayPath,
@@ -628,6 +646,31 @@ class ReviewCheckpointController implements vscode.Disposable {
         };
       })
     );
+  }
+
+  private getDiffCache(state: ReviewState): ReviewDiffCache {
+    const key = this.getDiffCacheKey(state);
+    if (!this.diffCache || this.diffCache.key !== key) {
+      this.diffCache = { key };
+    }
+
+    return this.diffCache;
+  }
+
+  private invalidateDiffCacheIfNeeded(state: ReviewState): void {
+    const key = this.getDiffCacheKey(state);
+    if (this.diffCache?.key !== key) {
+      this.diffCache = undefined;
+    }
+  }
+
+  private getDiffCacheKey(state: ReviewState): string {
+    return [
+      state.repositoryPath ?? "",
+      state.comparisonBaseRef ?? "",
+      state.selectedCommit?.hash ?? "",
+      String(state.changedFiles.length)
+    ].join("|");
   }
 
   private async validateCommitOnMaster(
