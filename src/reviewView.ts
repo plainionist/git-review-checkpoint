@@ -45,22 +45,6 @@ class SpacerTreeItem extends vscode.TreeItem {
   }
 }
 
-class ActionTreeItem extends vscode.TreeItem {
-  public constructor(
-    label: string,
-    command: string,
-    iconId: string
-  ) {
-    super(label, vscode.TreeItemCollapsibleState.None);
-    this.command = {
-      command,
-      title: label
-    };
-    this.iconPath = new vscode.ThemeIcon(iconId);
-    this.contextValue = "action";
-  }
-}
-
 export class ReviewTreeDataProvider
   implements vscode.TreeDataProvider<vscode.TreeItem>
 {
@@ -115,12 +99,6 @@ export class ReviewTreeDataProvider
       }
     }
 
-    items.push(...this.buildActionItems());
-
-    if (this.state.pendingCommits.length > 0 && items.length > 0) {
-      items.push(new SpacerTreeItem());
-    }
-
     if (this.state.pendingCommits.length === 0) {
       return items.length > 0
         ? items
@@ -141,64 +119,6 @@ export class ReviewTreeDataProvider
           )
       )
     );
-
-    return items;
-  }
-
-  private buildActionItems(): vscode.TreeItem[] {
-    const items: vscode.TreeItem[] = [
-      new ActionTreeItem("Refresh", "reviewCheckpoint.refresh", "refresh")
-    ];
-
-    if (this.state.pendingCommits.length > 0) {
-      items.push(
-        new ActionTreeItem(
-          "Choose commit",
-          "reviewCheckpoint.showPendingCommits",
-          "list-selection"
-        )
-      );
-    }
-
-    if (this.state.selectedCommit && this.state.comparisonBaseRef) {
-      items.push(
-        new ActionTreeItem(
-          "Show review diff",
-          "reviewCheckpoint.showReviewDiff",
-          "diff"
-        ),
-        new ActionTreeItem(
-          "Open side-by-side diff",
-          "reviewCheckpoint.openSideBySideDiff",
-          "split-horizontal"
-        ),
-        new ActionTreeItem(
-          "Open inline diff",
-          "reviewCheckpoint.openInlineDiff",
-          "list-flat"
-        )
-      );
-    }
-
-    if (this.state.status === "missing-checkpoint") {
-      items.push(
-        new ActionTreeItem(
-          "Initialize Review Checkpoint",
-          "reviewCheckpoint.initializeCheckpoint",
-          "add"
-        )
-      );
-    }
-
-    if (this.state.status === "ready" && this.state.selectedCommit) {
-      items.push(
-        new ActionTreeItem(
-          "Approve up to selected commit",
-          "reviewCheckpoint.approveSelectedCommit",
-          "pass"
-        )
-      );
-    }
 
     return items;
   }

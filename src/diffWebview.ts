@@ -1,6 +1,36 @@
 import * as vscode from "vscode";
 import { ReviewState } from "./reviewModel";
 
+export type DiffRenderMode = "inline" | "sideBySideCompact" | "sideBySideFull";
+
+export interface FullDiffFile {
+  displayPath: string;
+  status: string;
+  leftContent: string;
+  rightContent: string;
+}
+
+export interface ReviewDiffContent {
+  mode: DiffRenderMode;
+  diffText?: string;
+  fullFiles?: FullDiffFile[];
+}
+
+interface ParsedCompactRow {
+  kind: "hunk" | "line";
+  text?: string;
+  leftText?: string;
+  rightText?: string;
+  leftClass?: string;
+  rightClass?: string;
+}
+
+interface ParsedCompactFile {
+  title: string;
+  metadata: string[];
+  rows: ParsedCompactRow[];
+}
+
 function escapeHtml(value: string): string {
   return value
     .replace(/&/g, "&amp;")
@@ -8,35 +38,11 @@ function escapeHtml(value: string): string {
     .replace(/>/g, "&gt;");
 }
 
-function lineClass(line: string): string {
-  if (line.startsWith("diff --git ")) {
-    return "file-header";
-  }
-  if (line.startsWith("@@")) {
-    return "hunk";
-  }
-  if (line.startsWith("+++ ") || line.startsWith("--- ")) {
-    return "path";
-  }
-  if (line.startsWith("+") && !line.startsWith("+++ ")) {
-    return "add";
-  }
-  if (line.startsWith("-") && !line.startsWith("--- ")) {
-    return "delete";
-  }
-  if (
-    line.startsWith("index ") ||
-    line.startsWith("rename from ") ||
-    line.startsWith("rename to ") ||
-    line.startsWith("new file mode ") ||
-    line.startsWith("deleted file mode ")
-  ) {
-    return "meta";
-  }
-  return "context";
+function nonce(): string {
+  return Math.random().toString(36).slice(2);
 }
 
-function renderDiff(diff: string): string {
+function renderInlineDiff(diff: string): string {
   if (!diff.trim()) {
     return `<div class="empty">No changed hunks in the selected review range.</div>`;
   }
@@ -54,7 +60,24 @@ function renderDiff(diff: string): string {
       inBlock = true;
     }
 
-    const cssClass = lineClass(line);
+    const cssClass = line.startsWith("diff --git ")
+      ? "file-header"
+      : line.startsWith("@@")
+        ? "hunk"
+        : line.startsWith("+++ ") || line.startsWith("--- ")
+          ? "path"
+          : line.startsWith("+") && !line.startsWith("+++ ")
+            ? "add"
+            : line.startsWith("-") && !line.startsWith("--- ")
+              ? "delete"
+              : line.startsWith("index ") ||
+                  line.startsWith("rename from ") ||
+                  line.startsWith("rename to ") ||
+                  line.startsWith("new file mode ") ||
+                  line.startsWith("deleted file mode ")
+                ? "meta"
+                : "context";
+
     chunks.push(
       `<span class="line ${cssClass}">${escapeHtml(line === "" ? " " : line)}</span>`
     );
@@ -67,8 +90,202 @@ function renderDiff(diff: string): string {
   return chunks.join("");
 }
 
-function nonce(): string {
-  return Math.random().toString(36).slice(2);
+function parseCompactDiff(diff: string): ParsedCompactFile[] {
+  if (!diff.trim()) {
+    return [];
+  }
+
+  const files: ParsedCompactFile[] = [];
+  const lines = diff.replace(/\r/g, "").split("\n");
+  let current: ParsedCompactFile | undefined;
+  let inHunk = false;
+
+  for (const line of lines) {
+    if (line.startsWith("diff --git ")) {
+      if (current) {
+        files.push(current);
+      }
+
+      const match = /^diff --git a\/(.+?) b\/(.+)$/.exec(line);
+      const title = match
+        ? match[1] === match[2]
+          ? match[2]
+          : `${match[1]} -> ${match[2]}`
+        : line;
+
+      current = {
+        title,
+        metadata: [],
+        rows: []
+      };
+      inHunk = false;
+      continue;
+    }
+
+    if (!current) {
+      continue;
+    }
+
+    if (
+      line.startsWith("index ") ||
+      line.startsWith("--- ") ||
+      line.startsWith("+++ ") ||
+      line.startsWith("rename from ") ||
+      line.startsWith("rename to ") ||
+      line.startsWith("new file mode ") ||
+      line.startsWith("deleted file mode ")
+    ) {
+      current.metadata.push(line);
+      continue;
+    }
+
+    if (line.startsWith("@@")) {
+      current.rows.push({
+        kind: "hunk",
+        text: line
+      });
+      inHunk = true;
+      continue;
+    }
+
+    if (!inHunk || line === "\\ No newline at end of file") {
+      continue;
+    }
+
+    if (line.startsWith(" ")) {
+      const content = line.slice(1);
+      current.rows.push({
+        kind: "line",
+        leftText: content,
+        rightText: content,
+        leftClass: "context",
+        rightClass: "context"
+      });
+      continue;
+    }
+
+    if (line.startsWith("-") && !line.startsWith("--- ")) {
+      current.rows.push({
+        kind: "line",
+        leftText: line.slice(1),
+        rightText: "",
+        leftClass: "delete",
+        rightClass: "blank"
+      });
+      continue;
+    }
+
+    if (line.startsWith("+") && !line.startsWith("+++ ")) {
+      current.rows.push({
+        kind: "line",
+        leftText: "",
+        rightText: line.slice(1),
+        leftClass: "blank",
+        rightClass: "add"
+      });
+    }
+  }
+
+  if (current) {
+    files.push(current);
+  }
+
+  return files;
+}
+
+function renderCompactSideBySide(diff: string): string {
+  const files = parseCompactDiff(diff);
+  if (files.length === 0) {
+    return `<div class="empty">No changed hunks in the selected review range.</div>`;
+  }
+
+  return files
+    .map((file) => {
+      const metadata = file.metadata.length > 0
+        ? `<div class="meta-block">${file.metadata
+            .map((line) => `<div>${escapeHtml(line)}</div>`)
+            .join("")}</div>`
+        : "";
+
+      const rows = file.rows
+        .map((row) => {
+          if (row.kind === "hunk") {
+            return `<tr class="hunk-row"><td colspan="2">${escapeHtml(row.text ?? "")}</td></tr>`;
+          }
+
+          return `<tr>
+  <td class="${row.leftClass ?? "context"}">${escapeHtml(row.leftText ?? " ")}</td>
+  <td class="${row.rightClass ?? "context"}">${escapeHtml(row.rightText ?? " ")}</td>
+</tr>`;
+        })
+        .join("");
+
+      return `<section class="file">
+  <div class="file-title">${escapeHtml(file.title)}</div>
+  ${metadata}
+  <table class="side-table">
+    <thead>
+      <tr>
+        <th>Base</th>
+        <th>Selected</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${rows}
+    </tbody>
+  </table>
+</section>`;
+    })
+    .join("");
+}
+
+function renderFullSideBySide(files: readonly FullDiffFile[]): string {
+  if (files.length === 0) {
+    return `<div class="empty">No changed files in the selected review range.</div>`;
+  }
+
+  return files
+    .map((file) => {
+      const leftLines = file.leftContent.replace(/\r/g, "").split("\n");
+      const rightLines = file.rightContent.replace(/\r/g, "").split("\n");
+      const rowCount = Math.max(leftLines.length, rightLines.length);
+      const rows: string[] = [];
+
+      for (let index = 0; index < rowCount; index += 1) {
+        const left = leftLines[index] ?? "";
+        const right = rightLines[index] ?? "";
+        const changed = left !== right;
+        rows.push(`<tr>
+  <td class="${changed ? "changed" : "context"}">${escapeHtml(left || " ")}</td>
+  <td class="${changed ? "changed" : "context"}">${escapeHtml(right || " ")}</td>
+</tr>`);
+      }
+
+      return `<section class="file">
+  <div class="file-title">${escapeHtml(file.displayPath)} <span class="status">${escapeHtml(file.status)}</span></div>
+  <table class="side-table full">
+    <thead>
+      <tr>
+        <th>Base</th>
+        <th>Selected</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${rows.join("")}
+    </tbody>
+  </table>
+</section>`;
+    })
+    .join("");
+}
+
+function renderModeButton(
+  id: string,
+  label: string,
+  mode: DiffRenderMode,
+  activeMode: DiffRenderMode
+): string {
+  return `<button id="${id}" class="${mode === activeMode ? "active" : ""}">${label}</button>`;
 }
 
 export class DiffWebviewController implements vscode.Disposable {
@@ -78,9 +295,7 @@ export class DiffWebviewController implements vscode.Disposable {
   public constructor(
     private readonly extensionUri: vscode.Uri,
     private readonly approveSelectedCommit: (commitHash: string) => Promise<void>,
-    private readonly openCompactSideBySideDiff: () => Promise<void>,
-    private readonly openFullSideBySideDiff: () => Promise<void>,
-    private readonly openInlineDiff: () => Promise<void>
+    private readonly setRenderMode: (mode: DiffRenderMode) => Promise<void>
   ) {}
 
   public dispose(): void {
@@ -94,7 +309,7 @@ export class DiffWebviewController implements vscode.Disposable {
     this.panel?.dispose();
   }
 
-  public show(state: ReviewState, diff: string): void {
+  public show(state: ReviewState, content: ReviewDiffContent): void {
     if (!state.selectedCommit) {
       return;
     }
@@ -114,33 +329,33 @@ export class DiffWebviewController implements vscode.Disposable {
         this.panel = undefined;
       });
 
-      this.panel.webview.onDidReceiveMessage(async (message: { command?: string; commitHash?: string }) => {
-        if (message.command === "approve" && message.commitHash) {
-          await this.approveSelectedCommit(message.commitHash);
-        } else if (message.command === "openCompactSideBySideDiff") {
-          await this.openCompactSideBySideDiff();
-        } else if (message.command === "openSideBySideDiff") {
-          await this.openFullSideBySideDiff();
-        } else if (message.command === "openInlineDiff") {
-          await this.openInlineDiff();
-        }
-      }, undefined, this.disposables);
+      this.panel.webview.onDidReceiveMessage(
+        async (message: { command?: string; commitHash?: string; mode?: DiffRenderMode }) => {
+          if (message.command === "approve" && message.commitHash) {
+            await this.approveSelectedCommit(message.commitHash);
+          } else if (message.command === "setMode" && message.mode) {
+            await this.setRenderMode(message.mode);
+          }
+        },
+        undefined,
+        this.disposables
+      );
     } else {
       this.panel.reveal(vscode.ViewColumn.Active);
       this.panel.title = `Review Diff: ${state.selectedCommit.shortHash}`;
     }
 
-    this.panel.webview.html = this.renderHtml(state, diff);
+    this.panel.webview.html = this.renderHtml(state, content);
   }
 
-  private renderHtml(state: ReviewState, diff: string): string {
+  private renderHtml(state: ReviewState, content: ReviewDiffContent): string {
     const selectedCommit = state.selectedCommit;
     if (!selectedCommit || !this.panel) {
       return "";
     }
 
     const scriptNonce = nonce();
-    const stylesUri = this.panel.webview.asWebviewUri(
+    const iconUri = this.panel.webview.asWebviewUri(
       vscode.Uri.joinPath(this.extensionUri, "resources", "review-checkpoint.svg")
     );
 
@@ -152,40 +367,21 @@ export class DiffWebviewController implements vscode.Disposable {
         : state.comparisonBaseShortHash
           ? `Approved marker: ${escapeHtml(state.comparisonBaseShortHash)}`
           : "Approved marker: missing";
+
     const reviewRangeSummary = state.reviewRange
       ? `<p>Review range: ${escapeHtml(state.reviewRange)}</p>`
       : "";
     const approveButton =
-      state.status === "ready"
+      state.status !== "error"
         ? '<button class="approve" id="approve">Approve</button>'
         : "";
-    const fileDiffButtons =
-      state.changedFiles.length > 0 && state.comparisonBaseRef
-        ? `<button id="openInlineDiff">inline</button>
-    <button id="openSideBySideDiff">side-by-side (full)</button>
-    <button id="openCompactSideBySideDiff">side-by-side</button>`
-        : "";
-    const approveScript =
-      state.status === "ready"
-        ? `document.getElementById("approve")?.addEventListener("click", () => {
-      vscodeApi.postMessage({
-        command: "approve",
-        commitHash: ${JSON.stringify(selectedCommit.hash)}
-      });
-    });`
-        : "";
-    const fileDiffScript =
-      state.changedFiles.length > 0 && state.comparisonBaseRef
-        ? `document.getElementById("openCompactSideBySideDiff")?.addEventListener("click", () => {
-      vscodeApi.postMessage({ command: "openCompactSideBySideDiff" });
-    });
-    document.getElementById("openSideBySideDiff")?.addEventListener("click", () => {
-      vscodeApi.postMessage({ command: "openSideBySideDiff" });
-    });
-    document.getElementById("openInlineDiff")?.addEventListener("click", () => {
-      vscodeApi.postMessage({ command: "openInlineDiff" });
-    });`
-        : "";
+
+    const body =
+      content.mode === "inline"
+        ? renderInlineDiff(content.diffText ?? "")
+        : content.mode === "sideBySideCompact"
+          ? renderCompactSideBySide(content.diffText ?? "")
+          : renderFullSideBySide(content.fullFiles ?? []);
 
     return `<!DOCTYPE html>
 <html lang="en">
@@ -213,10 +409,10 @@ export class DiffWebviewController implements vscode.Disposable {
       position: sticky;
       top: 0;
       z-index: 2;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 8px;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+      align-items: start;
+      gap: 12px;
       background: var(--vscode-editor-background);
       margin-bottom: 16px;
       padding-top: 4px;
@@ -227,9 +423,23 @@ export class DiffWebviewController implements vscode.Disposable {
       margin: 0 0 6px;
       font-size: 1.2rem;
     }
+    .summary {
+      min-width: 0;
+    }
     .summary p {
       margin: 2px 0;
       color: var(--vscode-descriptionForeground);
+    }
+    .approve-wrap {
+      justify-self: center;
+      align-self: center;
+    }
+    .actions {
+      justify-self: end;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex-wrap: wrap;
     }
     button {
       border: none;
@@ -245,20 +455,29 @@ export class DiffWebviewController implements vscode.Disposable {
     button:hover {
       background: var(--vscode-button-hoverBackground);
     }
-    .approve {
-      margin-left: 4px;
-    }
-    .actions {
-      display: flex;
-      align-items: center;
-      gap: 6px;
-      flex-wrap: wrap;
+    button.active {
+      outline: 1px solid var(--vscode-focusBorder);
+      background: var(--vscode-button-hoverBackground);
     }
     .file {
       margin-bottom: 16px;
       border: 1px solid var(--vscode-panel-border);
       border-radius: 6px;
       overflow: hidden;
+    }
+    .file-title {
+      background: var(--vscode-editor-inactiveSelectionBackground);
+      padding: 10px 12px;
+      font-weight: 600;
+    }
+    .status {
+      color: var(--vscode-descriptionForeground);
+      font-weight: 400;
+    }
+    .meta-block {
+      padding: 8px 12px;
+      color: var(--vscode-descriptionForeground);
+      border-top: 1px solid var(--vscode-panel-border);
     }
     pre {
       margin: 0;
@@ -302,8 +521,45 @@ export class DiffWebviewController implements vscode.Disposable {
       border-radius: 6px;
       color: var(--vscode-descriptionForeground);
     }
-    .spacer {
-      flex: 1;
+    .side-table {
+      width: 100%;
+      border-collapse: collapse;
+      table-layout: fixed;
+      font-family: var(--vscode-editor-font-family);
+      font-size: var(--vscode-editor-font-size);
+    }
+    .side-table th,
+    .side-table td {
+      vertical-align: top;
+      text-align: left;
+      padding: 4px 10px;
+      white-space: pre-wrap;
+      word-break: break-word;
+      border-top: 1px solid var(--vscode-panel-border);
+    }
+    .side-table th {
+      background: var(--vscode-editor-inactiveSelectionBackground);
+      font-weight: 600;
+    }
+    .side-table td.blank {
+      background: var(--vscode-editor-background);
+    }
+    .side-table td.context {
+      background: var(--vscode-editor-background);
+    }
+    .side-table td.changed {
+      background: var(--vscode-diffEditor-insertedLineBackground);
+    }
+    .side-table td.add {
+      background: var(--vscode-diffEditor-insertedLineBackground);
+    }
+    .side-table td.delete {
+      background: var(--vscode-diffEditor-removedLineBackground);
+    }
+    .hunk-row td {
+      background: var(--vscode-diffEditor-diagonalFill);
+      color: var(--vscode-editorInfo-foreground);
+      font-weight: 600;
     }
     .icon {
       display: none;
@@ -318,18 +574,34 @@ export class DiffWebviewController implements vscode.Disposable {
       ${reviewRangeSummary}
       <p>Author: ${escapeHtml(selectedCommit.author)} • ${escapeHtml(selectedCommit.date)}</p>
     </div>
-    <div class="spacer"></div>
-    <div class="actions">
-      ${fileDiffButtons}
+    <div class="approve-wrap">
       ${approveButton}
     </div>
+    <div class="actions">
+      ${renderModeButton("mode-inline", "inline", "inline", content.mode)}
+      ${renderModeButton("mode-full", "side-by-side (full)", "sideBySideFull", content.mode)}
+      ${renderModeButton("mode-compact", "side-by-side", "sideBySideCompact", content.mode)}
+    </div>
   </div>
-  <img class="icon" src="${stylesUri}" alt="">
-  ${renderDiff(diff)}
+  <img class="icon" src="${iconUri}" alt="">
+  ${body}
   <script nonce="${scriptNonce}">
     const vscodeApi = acquireVsCodeApi();
-    ${approveScript}
-    ${fileDiffScript}
+    document.getElementById("approve")?.addEventListener("click", () => {
+      vscodeApi.postMessage({
+        command: "approve",
+        commitHash: ${JSON.stringify(selectedCommit.hash)}
+      });
+    });
+    document.getElementById("mode-inline")?.addEventListener("click", () => {
+      vscodeApi.postMessage({ command: "setMode", mode: "inline" });
+    });
+    document.getElementById("mode-full")?.addEventListener("click", () => {
+      vscodeApi.postMessage({ command: "setMode", mode: "sideBySideFull" });
+    });
+    document.getElementById("mode-compact")?.addEventListener("click", () => {
+      vscodeApi.postMessage({ command: "setMode", mode: "sideBySideCompact" });
+    });
   </script>
 </body>
 </html>`;

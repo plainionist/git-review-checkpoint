@@ -14,10 +14,16 @@ import {
   initializeApprovedRef,
   isAncestor,
   listPendingCommits,
+  readFileAtRevision,
   toShortHash,
   updateApprovedRef
 } from "./git";
-import { DiffWebviewController } from "./diffWebview";
+import {
+  DiffRenderMode,
+  DiffWebviewController,
+  FullDiffFile,
+  ReviewDiffContent
+} from "./diffWebview";
 import { REVIEW_CONTENT_SCHEME, ReviewContentProvider } from "./reviewContentProvider";
 import { CommitTreeItem, ReviewTreeDataProvider } from "./reviewView";
 import { ReviewState, loadReviewState } from "./reviewModel";
@@ -98,6 +104,7 @@ class ReviewCheckpointController implements vscode.Disposable {
   private pollTimer?: NodeJS.Timeout;
   private gitRefreshSubscription?: vscode.Disposable;
   private selectedCommitHash?: string;
+  private diffRenderMode: DiffRenderMode = "inline";
 
   public constructor(private readonly context: vscode.ExtensionContext) {
     this.treeView = vscode.window.createTreeView("reviewCheckpointView", {
@@ -108,9 +115,10 @@ class ReviewCheckpointController implements vscode.Disposable {
     this.diffWebview = new DiffWebviewController(
       context.extensionUri,
       async (commitHash) => this.approveSelectedCommit(commitHash),
-      async () => this.openCompactSideBySideDiff(),
-      async () => this.openSideBySideDiff(),
-      async () => this.openInlineDiff()
+      async (mode) => {
+        this.diffRenderMode = mode;
+        await this.showReviewDiff(undefined, mode);
+      }
     );
 
     this.disposables.push(this.treeView, this.diffWebview);
@@ -288,7 +296,6 @@ class ReviewCheckpointController implements vscode.Disposable {
       }
     }
     await initializeApprovedRef(state.repositoryPath);
-    await initializeApprovedRef(state.repositoryPath);
     await this.refresh({ showInitializationPrompt: false });
   }
 
@@ -329,10 +336,17 @@ class ReviewCheckpointController implements vscode.Disposable {
     await this.refresh({ showInitializationPrompt: false });
   }
 
-  private async showReviewDiff(commitHash?: string): Promise<void> {
+  private async showReviewDiff(
+    commitHash?: string,
+    mode?: DiffRenderMode
+  ): Promise<void> {
     if (commitHash && commitHash !== this.selectedCommitHash) {
       this.selectedCommitHash = commitHash;
       await this.refresh({ showInitializationPrompt: false });
+    }
+
+    if (mode) {
+      this.diffRenderMode = mode;
     }
 
     const state = await this.getCurrentState();
@@ -354,12 +368,8 @@ class ReviewCheckpointController implements vscode.Disposable {
       return;
     }
 
-    const diff = await getCompactDiff(
-      state.repositoryPath,
-      state.comparisonBaseRef,
-      state.selectedCommit.hash
-    );
-    this.diffWebview.show(state, diff);
+    const content = await this.buildReviewDiffContent(state);
+    this.diffWebview.show(state, content);
   }
 
   private async openSideBySideDiff(file?: ChangedFile): Promise<void> {
@@ -491,8 +501,33 @@ class ReviewCheckpointController implements vscode.Disposable {
       return;
     }
 
+    const targetCommitHash = commitHash ?? state.selectedCommit?.hash;
+    if (!targetCommitHash) {
+      vscode.window.showInformationMessage("Select a commit first.");
+      return;
+    }
+
     if (state.status === "missing-checkpoint") {
-      await this.initializeCheckpoint();
+      const shortHash = toShortHash(targetCommitHash);
+      const choice = await vscode.window.showWarningMessage(
+        `Create ${APPROVED_REF} at ${shortHash}?`,
+        {
+          modal: true,
+          detail:
+            "This creates the approved marker and marks all commits up to this commit as approved."
+        },
+        "Approve"
+      );
+
+      if (choice !== "Approve") {
+        return;
+      }
+
+      await this.validateCommitOnMaster(state.repositoryPath, targetCommitHash);
+      await updateApprovedRef(state.repositoryPath, targetCommitHash);
+      this.diffWebview.close();
+      this.selectedCommitHash = undefined;
+      await this.refresh({ showInitializationPrompt: false });
       return;
     }
 
@@ -500,12 +535,6 @@ class ReviewCheckpointController implements vscode.Disposable {
       vscode.window.showErrorMessage(
         state.message ?? "Review Checkpoint is not ready."
       );
-      return;
-    }
-
-    const targetCommitHash = commitHash ?? state.selectedCommit?.hash;
-    if (!targetCommitHash) {
-      vscode.window.showInformationMessage("Select a pending commit first.");
       return;
     }
 
@@ -531,16 +560,81 @@ class ReviewCheckpointController implements vscode.Disposable {
     await this.refresh({ showInitializationPrompt: false });
   }
 
-  private async validateApprovalTarget(
+  private async buildReviewDiffContent(
+    state: ReviewState
+  ): Promise<ReviewDiffContent> {
+    if (!state.repositoryPath || !state.selectedCommit || !state.comparisonBaseRef) {
+      return {
+        mode: this.diffRenderMode,
+        diffText: ""
+      };
+    }
+
+    if (this.diffRenderMode === "sideBySideFull") {
+      return {
+        mode: this.diffRenderMode,
+        fullFiles: await this.loadFullDiffFiles(state)
+      };
+    }
+
+    return {
+      mode: this.diffRenderMode,
+      diffText: await getCompactDiff(
+        state.repositoryPath,
+        state.comparisonBaseRef,
+        state.selectedCommit.hash
+      )
+    };
+  }
+
+  private async loadFullDiffFiles(state: ReviewState): Promise<FullDiffFile[]> {
+    if (!state.repositoryPath || !state.selectedCommit || !state.comparisonBaseRef) {
+      return [];
+    }
+
+    return Promise.all(
+      state.changedFiles.map(async (changedFile) => {
+        const leftPath =
+          changedFile.statusCode === "A"
+            ? changedFile.newPath ?? changedFile.path
+            : changedFile.oldPath ?? changedFile.path;
+        const rightPath =
+          changedFile.statusCode === "D"
+            ? changedFile.oldPath ?? changedFile.path
+            : changedFile.newPath ?? changedFile.path;
+
+        const leftContent =
+          changedFile.statusCode === "A"
+            ? ""
+            : await readFileAtRevision(
+                state.repositoryPath as string,
+                state.comparisonBaseRef as string,
+                leftPath
+              );
+        const rightContent =
+          changedFile.statusCode === "D"
+            ? ""
+            : await readFileAtRevision(
+                state.repositoryPath as string,
+                state.selectedCommit!.hash,
+                rightPath
+              );
+
+        return {
+          displayPath: changedFile.displayPath,
+          status: changedFile.status,
+          leftContent,
+          rightContent
+        };
+      })
+    );
+  }
+
+  private async validateCommitOnMaster(
     repositoryPath: string,
     commitHash: string
   ): Promise<void> {
     const repositoryRoot = await getRepositoryRoot(repositoryPath);
-    const approvedRefExists = await hasRef(repositoryRoot, APPROVED_REF);
-    if (!approvedRefExists) {
-      throw new Error("No approved marker exists yet.");
-    }
-
     const commitExists = await ensureCommitExists(repositoryRoot, commitHash);
     if (!commitExists) {
       throw new Error("The selected commit no longer exists.");
@@ -554,6 +648,19 @@ class ReviewCheckpointController implements vscode.Disposable {
     if (!reachableFromMaster) {
       throw new Error("The selected commit is not reachable from master.");
     }
+  }
+
+  private async validateApprovalTarget(
+    repositoryPath: string,
+    commitHash: string
+  ): Promise<void> {
+    const repositoryRoot = await getRepositoryRoot(repositoryPath);
+    const approvedRefExists = await hasRef(repositoryRoot, APPROVED_REF);
+    if (!approvedRefExists) {
+      throw new Error("No approved marker exists yet.");
+    }
+
+    await this.validateCommitOnMaster(repositoryRoot, commitHash);
 
     const pendingCommits = await listPendingCommits(repositoryRoot);
     if (!pendingCommits.some((commit) => commit.hash === commitHash)) {

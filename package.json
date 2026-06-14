@@ -88,11 +88,6 @@
           "command": "reviewCheckpoint.refresh",
           "when": "view == reviewCheckpointView",
           "group": "navigation@1"
-        },
-        {
-          "command": "reviewCheckpoint.approveSelectedCommit",
-          "when": "view == reviewCheckpointView",
-          "group": "navigation@2"
         }
       ],
       "view/item/context": [
