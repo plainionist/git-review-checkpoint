@@ -7,6 +7,7 @@ import {
   REVIEW_BRANCH,
   POLL_INTERVAL_MS,
   ensureCommitExists,
+  getCompactFileDiff,
   getCompactDiff,
   getRepositoryRoot,
   hasRef,
@@ -17,11 +18,7 @@ import {
   updateApprovedRef
 } from "./git";
 import { DiffWebviewController } from "./diffWebview";
-import {
-  REVIEW_CONTENT_SCHEME,
-  ReviewContentProvider,
-  createReviewFileUri
-} from "./reviewContentProvider";
+import { REVIEW_CONTENT_SCHEME, ReviewContentProvider } from "./reviewContentProvider";
 import { CommitTreeItem, ReviewTreeDataProvider } from "./reviewView";
 import { ReviewState, loadReviewState } from "./reviewModel";
 
@@ -40,15 +37,67 @@ interface GitRepositoryApi {
   };
 }
 
+function buildCompactFilePreview(diff: string): { left: string; right: string } {
+  const left: string[] = [];
+  const right: string[] = [];
+  const lines = diff.replace(/\r/g, "").split("\n");
+  let hasHunks = false;
+
+  for (const line of lines) {
+    if (line.startsWith("@@")) {
+      hasHunks = true;
+      left.push(line);
+      right.push(line);
+      continue;
+    }
+
+    if (!hasHunks || line === "\\ No newline at end of file") {
+      continue;
+    }
+
+    if (line.startsWith(" ")) {
+      const content = line.slice(1);
+      left.push(content);
+      right.push(content);
+      continue;
+    }
+
+    if (line.startsWith("-") && !line.startsWith("--- ")) {
+      left.push(line.slice(1));
+      right.push("");
+      continue;
+    }
+
+    if (line.startsWith("+") && !line.startsWith("+++ ")) {
+      left.push("");
+      right.push(line.slice(1));
+      continue;
+    }
+  }
+
+  if (!hasHunks) {
+    const fallback = diff.trim() || "No textual hunk preview is available for this file.";
+    return {
+      left: fallback,
+      right: fallback
+    };
+  }
+
+  return {
+    left: left.join("\n"),
+    right: right.join("\n")
+  };
+}
+
 class ReviewCheckpointController implements vscode.Disposable {
   private readonly provider = new ReviewTreeDataProvider();
   private readonly treeView: vscode.TreeView<vscode.TreeItem>;
   private readonly diffWebview: DiffWebviewController;
+  private readonly reviewContentProvider = new ReviewContentProvider();
   private readonly disposables: vscode.Disposable[] = [];
   private pollTimer?: NodeJS.Timeout;
   private gitRefreshSubscription?: vscode.Disposable;
   private selectedCommitHash?: string;
-  private missingCheckpointPromptShown = false;
 
   public constructor(private readonly context: vscode.ExtensionContext) {
     this.treeView = vscode.window.createTreeView("reviewCheckpointView", {
@@ -59,6 +108,7 @@ class ReviewCheckpointController implements vscode.Disposable {
     this.diffWebview = new DiffWebviewController(
       context.extensionUri,
       async (commitHash) => this.approveSelectedCommit(commitHash),
+      async () => this.openCompactSideBySideDiff(),
       async () => this.openSideBySideDiff(),
       async () => this.openInlineDiff()
     );
@@ -67,7 +117,7 @@ class ReviewCheckpointController implements vscode.Disposable {
     this.disposables.push(
       vscode.workspace.registerTextDocumentContentProvider(
         REVIEW_CONTENT_SCHEME,
-        new ReviewContentProvider()
+        this.reviewContentProvider
       )
     );
 
@@ -115,7 +165,7 @@ class ReviewCheckpointController implements vscode.Disposable {
       vscode.commands.registerCommand(
         "reviewCheckpoint.openSideBySideDiff",
         async (file?: ChangedFile) => {
-          await this.openFileDiff("sideBySide", file);
+          await this.openFileDiff("sideBySideFull", file);
         }
       ),
       vscode.commands.registerCommand(
@@ -140,18 +190,13 @@ class ReviewCheckpointController implements vscode.Disposable {
         "reviewCheckpoint.activateCommit",
         async (commitHash: string) => {
           if (this.selectedCommitHash === commitHash) {
-            if (this.provider.getState().status === "missing-checkpoint") {
-              await this.showReviewDiff();
-            }
+            await this.showReviewDiff();
             return;
           }
 
           this.selectedCommitHash = commitHash;
           await this.refresh({ showInitializationPrompt: false });
-
-          if (this.provider.getState().status === "missing-checkpoint") {
-            await this.showReviewDiff();
-          }
+          await this.showReviewDiff();
         }
       )
     );
@@ -161,7 +206,6 @@ class ReviewCheckpointController implements vscode.Disposable {
     this.disposables.push(
       this.treeView.onDidChangeVisibility(async (event) => {
         if (event.visible) {
-          this.missingCheckpointPromptShown = false;
           await this.refresh();
           this.startPolling();
           this.attachGitRefresh();
@@ -169,7 +213,6 @@ class ReviewCheckpointController implements vscode.Disposable {
           this.stopPolling();
           this.gitRefreshSubscription?.dispose();
           this.gitRefreshSubscription = undefined;
-          this.missingCheckpointPromptShown = false;
         }
       }),
       this.treeView.onDidChangeSelection(async (event) => {
@@ -205,23 +248,6 @@ class ReviewCheckpointController implements vscode.Disposable {
       this.selectedCommitHash = state.selectedCommit?.hash;
       this.provider.setState(state);
       this.treeView.message = undefined;
-
-      if (
-        options?.showInitializationPrompt !== false &&
-        state.status === "missing-checkpoint" &&
-        this.treeView.visible &&
-        !this.missingCheckpointPromptShown
-      ) {
-        this.missingCheckpointPromptShown = true;
-        const choice = await vscode.window.showInformationMessage(
-          "No approved marker exists yet. Initialize it to current master?",
-          "Initialize"
-        );
-
-        if (choice === "Initialize") {
-          await this.initializeCheckpoint(true);
-        }
-      }
     } catch (error) {
       const message = this.toUserMessage(error);
       this.provider.setState({
@@ -261,9 +287,8 @@ class ReviewCheckpointController implements vscode.Disposable {
         return;
       }
     }
-
     await initializeApprovedRef(state.repositoryPath);
-    this.missingCheckpointPromptShown = false;
+    await initializeApprovedRef(state.repositoryPath);
     await this.refresh({ showInitializationPrompt: false });
   }
 
@@ -338,15 +363,19 @@ class ReviewCheckpointController implements vscode.Disposable {
   }
 
   private async openSideBySideDiff(file?: ChangedFile): Promise<void> {
-    await this.openFileDiff("sideBySide", file);
+    await this.openFileDiff("sideBySideFull", file);
   }
 
   private async openInlineDiff(file?: ChangedFile): Promise<void> {
     await this.openFileDiff("inline", file);
   }
 
+  private async openCompactSideBySideDiff(file?: ChangedFile): Promise<void> {
+    await this.openFileDiff("sideBySideCompact", file);
+  }
+
   private async openFileDiff(
-    mode: "sideBySide" | "inline",
+    mode: "sideBySideCompact" | "sideBySideFull" | "inline",
     file?: ChangedFile
   ): Promise<void> {
     const state = await this.getCurrentState();
@@ -382,18 +411,39 @@ class ReviewCheckpointController implements vscode.Disposable {
         ? changedFile.oldPath ?? changedFile.path
         : changedFile.newPath ?? changedFile.path;
 
-    const leftUri = createReviewFileUri(
-      state.repositoryPath,
-      state.comparisonBaseRef,
-      leftPath,
-      changedFile.statusCode === "A"
-    );
-    const rightUri = createReviewFileUri(
-      state.repositoryPath,
-      state.selectedCommit.hash,
-      rightPath,
-      changedFile.statusCode === "D"
-    );
+    let leftUri: vscode.Uri;
+    let rightUri: vscode.Uri;
+
+    if (mode === "sideBySideCompact") {
+      const compactDiff = await getCompactFileDiff(
+        state.repositoryPath,
+        state.comparisonBaseRef,
+        state.selectedCommit.hash,
+        changedFile.path
+      );
+      const preview = buildCompactFilePreview(compactDiff);
+      leftUri = this.reviewContentProvider.createGeneratedContentUri(
+        leftPath,
+        preview.left
+      );
+      rightUri = this.reviewContentProvider.createGeneratedContentUri(
+        rightPath,
+        preview.right
+      );
+    } else {
+      leftUri = this.reviewContentProvider.createRevisionUri(
+        state.repositoryPath,
+        state.comparisonBaseRef,
+        leftPath,
+        changedFile.statusCode === "A"
+      );
+      rightUri = this.reviewContentProvider.createRevisionUri(
+        state.repositoryPath,
+        state.selectedCommit.hash,
+        rightPath,
+        changedFile.statusCode === "D"
+      );
+    }
 
     const title = `${changedFile.displayPath} (${state.comparisonBaseShortHash ?? "base"} ↔ ${state.selectedCommit.shortHash})`;
     await vscode.commands.executeCommand("vscode.diff", leftUri, rightUri, title);
@@ -403,7 +453,7 @@ class ReviewCheckpointController implements vscode.Disposable {
       .get<boolean>("renderSideBySide", true);
     const shouldToggle =
       (mode === "inline" && rendersSideBySide) ||
-      (mode === "sideBySide" && !rendersSideBySide);
+      (mode !== "inline" && !rendersSideBySide);
 
     if (shouldToggle) {
       await vscode.commands.executeCommand(
@@ -434,7 +484,19 @@ class ReviewCheckpointController implements vscode.Disposable {
 
   private async approveSelectedCommit(commitHash?: string): Promise<void> {
     const state = await this.getCurrentState();
-    if (state.status !== "ready" || !state.repositoryPath) {
+    if (!state.repositoryPath) {
+      vscode.window.showErrorMessage(
+        state.message ?? "Review Checkpoint is not ready."
+      );
+      return;
+    }
+
+    if (state.status === "missing-checkpoint") {
+      await this.initializeCheckpoint();
+      return;
+    }
+
+    if (state.status !== "ready") {
       vscode.window.showErrorMessage(
         state.message ?? "Review Checkpoint is not ready."
       );

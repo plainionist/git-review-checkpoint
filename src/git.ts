@@ -287,6 +287,26 @@ export async function getCompactDiff(
   );
 }
 
+export async function getCompactFileDiff(
+  repositoryPath: string,
+  baseRef: string,
+  selectedCommit: string,
+  filePath: string
+): Promise<string> {
+  return runGit(
+    repositoryPath,
+    [
+      "diff",
+      "--find-renames",
+      `--unified=${DIFF_CONTEXT_LINES}`,
+      `${baseRef}..${selectedCommit}`,
+      "--",
+      normalizeGitPath(filePath)
+    ],
+    { trim: false }
+  );
+}
+
 export async function updateApprovedRef(
   repositoryPath: string,
   selectedCommit: string

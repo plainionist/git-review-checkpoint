@@ -19,7 +19,6 @@
     "onView:reviewCheckpointView",
     "onCommand:reviewCheckpoint.refresh",
     "onCommand:reviewCheckpoint.initializeCheckpoint",
-    "onCommand:reviewCheckpoint.showPendingCommits",
     "onCommand:reviewCheckpoint.showReviewDiff",
     "onCommand:reviewCheckpoint.openSideBySideDiff",
     "onCommand:reviewCheckpoint.openInlineDiff",
@@ -47,12 +46,13 @@
     "commands": [
       {
         "command": "reviewCheckpoint.refresh",
-        "title": "Review Checkpoint: Refresh",
-        "category": "Review Checkpoint"
+        "title": "Refresh",
+        "category": "Review Checkpoint",
+        "icon": "$(refresh)"
       },
       {
         "command": "reviewCheckpoint.initializeCheckpoint",
-        "title": "Review Checkpoint: Initialize Checkpoint",
+        "title": "Approved",
         "category": "Review Checkpoint"
       },
       {
@@ -77,8 +77,9 @@
       },
       {
         "command": "reviewCheckpoint.approveSelectedCommit",
-        "title": "Review Checkpoint: Approve Selected Commit",
-        "category": "Review Checkpoint"
+        "title": "Approved",
+        "category": "Review Checkpoint",
+        "icon": "$(pass)"
       }
     ],
     "menus": {
@@ -89,27 +90,12 @@
           "group": "navigation@1"
         },
         {
-          "command": "reviewCheckpoint.initializeCheckpoint",
-          "when": "view == reviewCheckpointView",
-          "group": "navigation@2"
-        },
-        {
-          "command": "reviewCheckpoint.showReviewDiff",
-          "when": "view == reviewCheckpointView",
-          "group": "navigation@3"
-        },
-        {
           "command": "reviewCheckpoint.approveSelectedCommit",
           "when": "view == reviewCheckpointView",
-          "group": "navigation@4"
+          "group": "navigation@2"
         }
       ],
       "view/item/context": [
-        {
-          "command": "reviewCheckpoint.openSideBySideDiff",
-          "when": "view == reviewCheckpointView && viewItem == changedFile",
-          "group": "inline"
-        },
         {
           "command": "reviewCheckpoint.showReviewDiff",
           "when": "view == reviewCheckpointView && viewItem == pendingCommit",

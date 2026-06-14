@@ -78,7 +78,8 @@ export class DiffWebviewController implements vscode.Disposable {
   public constructor(
     private readonly extensionUri: vscode.Uri,
     private readonly approveSelectedCommit: (commitHash: string) => Promise<void>,
-    private readonly openSideBySideDiff: () => Promise<void>,
+    private readonly openCompactSideBySideDiff: () => Promise<void>,
+    private readonly openFullSideBySideDiff: () => Promise<void>,
     private readonly openInlineDiff: () => Promise<void>
   ) {}
 
@@ -116,8 +117,10 @@ export class DiffWebviewController implements vscode.Disposable {
       this.panel.webview.onDidReceiveMessage(async (message: { command?: string; commitHash?: string }) => {
         if (message.command === "approve" && message.commitHash) {
           await this.approveSelectedCommit(message.commitHash);
+        } else if (message.command === "openCompactSideBySideDiff") {
+          await this.openCompactSideBySideDiff();
         } else if (message.command === "openSideBySideDiff") {
-          await this.openSideBySideDiff();
+          await this.openFullSideBySideDiff();
         } else if (message.command === "openInlineDiff") {
           await this.openInlineDiff();
         }
@@ -154,12 +157,13 @@ export class DiffWebviewController implements vscode.Disposable {
       : "";
     const approveButton =
       state.status === "ready"
-        ? '<button id="approve">Approve up to selected commit</button>'
+        ? '<button class="approve" id="approve">Approve</button>'
         : "";
     const fileDiffButtons =
       state.changedFiles.length > 0 && state.comparisonBaseRef
-        ? `<button id="openSideBySideDiff">Open side-by-side file diff</button>
-    <button id="openInlineDiff">Open inline file diff</button>`
+        ? `<button id="openInlineDiff">inline</button>
+    <button id="openSideBySideDiff">side-by-side (full)</button>
+    <button id="openCompactSideBySideDiff">side-by-side</button>`
         : "";
     const approveScript =
       state.status === "ready"
@@ -172,7 +176,10 @@ export class DiffWebviewController implements vscode.Disposable {
         : "";
     const fileDiffScript =
       state.changedFiles.length > 0 && state.comparisonBaseRef
-        ? `document.getElementById("openSideBySideDiff")?.addEventListener("click", () => {
+        ? `document.getElementById("openCompactSideBySideDiff")?.addEventListener("click", () => {
+      vscodeApi.postMessage({ command: "openCompactSideBySideDiff" });
+    });
+    document.getElementById("openSideBySideDiff")?.addEventListener("click", () => {
       vscodeApi.postMessage({ command: "openSideBySideDiff" });
     });
     document.getElementById("openInlineDiff")?.addEventListener("click", () => {
@@ -203,11 +210,16 @@ export class DiffWebviewController implements vscode.Disposable {
       padding: 16px;
     }
     .toolbar {
+      position: sticky;
+      top: 0;
+      z-index: 2;
       display: flex;
       align-items: center;
       justify-content: space-between;
-      gap: 16px;
+      gap: 8px;
+      background: var(--vscode-editor-background);
       margin-bottom: 16px;
+      padding-top: 4px;
       padding-bottom: 12px;
       border-bottom: 1px solid var(--vscode-panel-border);
     }
@@ -222,13 +234,25 @@ export class DiffWebviewController implements vscode.Disposable {
     button {
       border: none;
       border-radius: 4px;
-      padding: 8px 12px;
+      padding: 4px 8px;
       cursor: pointer;
       color: var(--vscode-button-foreground);
       background: var(--vscode-button-background);
+      font-size: 0.85rem;
+      line-height: 1.2;
+      white-space: nowrap;
     }
     button:hover {
       background: var(--vscode-button-hoverBackground);
+    }
+    .approve {
+      margin-left: 4px;
+    }
+    .actions {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex-wrap: wrap;
     }
     .file {
       margin-bottom: 16px;
@@ -295,8 +319,10 @@ export class DiffWebviewController implements vscode.Disposable {
       <p>Author: ${escapeHtml(selectedCommit.author)} • ${escapeHtml(selectedCommit.date)}</p>
     </div>
     <div class="spacer"></div>
-    ${fileDiffButtons}
-    ${approveButton}
+    <div class="actions">
+      ${fileDiffButtons}
+      ${approveButton}
+    </div>
   </div>
   <img class="icon" src="${stylesUri}" alt="">
   ${renderDiff(diff)}
