@@ -1,11 +1,10 @@
 import * as vscode from "vscode";
 import {
-  APPROVED_REF,
   ChangedFile,
   GitCommandError,
   PendingCommit,
-  REVIEW_BRANCH,
   POLL_INTERVAL_MS,
+  ReviewBranch,
   ensureCommitExists,
   getCompactFileDiff,
   getCompactDiff,
@@ -279,7 +278,7 @@ class ReviewCheckpointController implements vscode.Disposable {
 
   private async initializeCheckpoint(skipPrompt = false): Promise<void> {
     const state = await this.getCurrentState();
-    if (!state.repositoryPath) {
+    if (!state.repositoryPath || !state.approvedRef || !state.reviewBranch) {
       vscode.window.showErrorMessage(
         state.message ?? "No repository is available for Review Checkpoint."
       );
@@ -295,7 +294,7 @@ class ReviewCheckpointController implements vscode.Disposable {
 
     if (!skipPrompt) {
       const choice = await vscode.window.showInformationMessage(
-        "No approved marker exists yet. Initialize it to current master?",
+        `No approved marker exists yet. Initialize it to current ${state.reviewBranch}?`,
         "Initialize"
       );
 
@@ -303,7 +302,11 @@ class ReviewCheckpointController implements vscode.Disposable {
         return;
       }
     }
-    await initializeApprovedRef(state.repositoryPath);
+    await initializeApprovedRef(
+      state.repositoryPath,
+      state.approvedRef,
+      state.reviewBranch
+    );
     await this.refresh({ showInitializationPrompt: false });
   }
 
@@ -319,8 +322,8 @@ class ReviewCheckpointController implements vscode.Disposable {
     if (state.pendingCommits.length === 0) {
       vscode.window.showInformationMessage(
         state.status === "missing-checkpoint"
-          ? "No commits were found on master."
-          : "Everything up to master is approved."
+          ? `No commits were found on ${state.reviewBranch ?? "the mainline branch"}.`
+          : `Everything up to ${state.reviewBranch ?? "the mainline branch"} is approved.`
       );
       return;
     }
@@ -502,7 +505,7 @@ class ReviewCheckpointController implements vscode.Disposable {
 
   private async approveSelectedCommit(commitHash?: string): Promise<void> {
     const state = await this.getCurrentState();
-    if (!state.repositoryPath) {
+    if (!state.repositoryPath || !state.reviewBranch || !state.approvedRef) {
       vscode.window.showErrorMessage(
         state.message ?? "Review Checkpoint is not ready."
       );
@@ -516,8 +519,16 @@ class ReviewCheckpointController implements vscode.Disposable {
     }
 
     if (state.status === "missing-checkpoint") {
-      await this.validateCommitOnMaster(state.repositoryPath, targetCommitHash);
-      await updateApprovedRef(state.repositoryPath, targetCommitHash);
+      await this.validateCommitOnBranch(
+        state.repositoryPath,
+        state.reviewBranch,
+        targetCommitHash
+      );
+      await updateApprovedRef(
+        state.repositoryPath,
+        state.approvedRef,
+        targetCommitHash
+      );
       this.diffWebview.close();
       this.selectedCommitHash = undefined;
       await this.refresh({ showInitializationPrompt: false });
@@ -531,8 +542,17 @@ class ReviewCheckpointController implements vscode.Disposable {
       return;
     }
 
-    await this.validateApprovalTarget(state.repositoryPath, targetCommitHash);
-    await updateApprovedRef(state.repositoryPath, targetCommitHash);
+    await this.validateApprovalTarget(
+      state.repositoryPath,
+      state.reviewBranch,
+      state.approvedRef,
+      targetCommitHash
+    );
+    await updateApprovedRef(
+      state.repositoryPath,
+      state.approvedRef,
+      targetCommitHash
+    );
     this.diffWebview.close();
     this.selectedCommitHash = undefined;
     await this.refresh({ showInitializationPrompt: false });
@@ -643,8 +663,9 @@ class ReviewCheckpointController implements vscode.Disposable {
     ].join("|");
   }
 
-  private async validateCommitOnMaster(
+  private async validateCommitOnBranch(
     repositoryPath: string,
+    reviewBranch: ReviewBranch,
     commitHash: string
   ): Promise<void> {
     const repositoryRoot = await getRepositoryRoot(repositoryPath);
@@ -656,26 +677,32 @@ class ReviewCheckpointController implements vscode.Disposable {
     const reachableFromMaster = await isAncestor(
       repositoryRoot,
       commitHash,
-      REVIEW_BRANCH
+      reviewBranch
     );
     if (!reachableFromMaster) {
-      throw new Error("The selected commit is not reachable from master.");
+      throw new Error(`The selected commit is not reachable from ${reviewBranch}.`);
     }
   }
 
   private async validateApprovalTarget(
     repositoryPath: string,
+    reviewBranch: ReviewBranch,
+    approvedRef: string,
     commitHash: string
   ): Promise<void> {
     const repositoryRoot = await getRepositoryRoot(repositoryPath);
-    const approvedRefExists = await hasRef(repositoryRoot, APPROVED_REF);
+    const approvedRefExists = await hasRef(repositoryRoot, approvedRef);
     if (!approvedRefExists) {
       throw new Error("No approved marker exists yet.");
     }
 
-    await this.validateCommitOnMaster(repositoryRoot, commitHash);
+    await this.validateCommitOnBranch(repositoryRoot, reviewBranch, commitHash);
 
-    const pendingCommits = await listPendingCommits(repositoryRoot);
+    const pendingCommits = await listPendingCommits(
+      repositoryRoot,
+      approvedRef,
+      reviewBranch
+    );
     if (!pendingCommits.some((commit) => commit.hash === commitHash)) {
       throw new Error(
         "The selected commit is no longer in the pending range."

@@ -3,11 +3,17 @@ import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
 
-export const REVIEW_BRANCH = "master";
-export const APPROVED_REF = "refs/approved/master";
+export const SUPPORTED_REVIEW_BRANCHES = ["main", "master"] as const;
 export const POLL_INTERVAL_MS = 15_000;
 export const DIFF_CONTEXT_LINES = 3;
 export const INITIAL_COMMIT_PREVIEW_COUNT = 20;
+
+export type ReviewBranch = (typeof SUPPORTED_REVIEW_BRANCHES)[number];
+
+export interface ReviewTarget {
+  reviewBranch: ReviewBranch;
+  approvedRef: string;
+}
 
 export interface PendingCommit {
   hash: string;
@@ -107,6 +113,10 @@ export function toShortHash(hash: string): string {
   return hash.slice(0, 7);
 }
 
+export function getApprovedRef(reviewBranch: ReviewBranch): string {
+  return `refs/approved/${reviewBranch}`;
+}
+
 export async function getRepositoryRoot(workspacePath: string): Promise<string> {
   return runGit(workspacePath, ["rev-parse", "--show-toplevel"]);
 }
@@ -130,14 +140,79 @@ export async function resolveCommit(
   return runGit(repositoryPath, ["rev-parse", "--verify", `${ref}^{commit}`]);
 }
 
-export async function getMasterCommit(repositoryPath: string): Promise<string> {
-  return resolveCommit(repositoryPath, REVIEW_BRANCH);
+async function tryRunGit(
+  repositoryPath: string,
+  args: readonly string[]
+): Promise<string | undefined> {
+  try {
+    return await runGit(repositoryPath, args);
+  } catch (error) {
+    if (error instanceof GitCommandError) {
+      return undefined;
+    }
+
+    throw error;
+  }
+}
+
+async function detectReviewBranch(
+  repositoryPath: string
+): Promise<ReviewBranch | undefined> {
+  const candidates: ReviewBranch[] = [];
+
+  const originHead = await tryRunGit(repositoryPath, [
+    "symbolic-ref",
+    "--short",
+    "refs/remotes/origin/HEAD"
+  ]);
+  if (originHead === "origin/main" || originHead === "origin/master") {
+    candidates.push(originHead.slice("origin/".length) as ReviewBranch);
+  }
+
+  const currentBranch = await tryRunGit(repositoryPath, ["branch", "--show-current"]);
+  if (currentBranch === "main" || currentBranch === "master") {
+    candidates.push(currentBranch);
+  }
+
+  for (const supportedBranch of SUPPORTED_REVIEW_BRANCHES) {
+    candidates.push(supportedBranch);
+  }
+
+  for (const candidate of candidates) {
+    if (await hasRef(repositoryPath, `refs/heads/${candidate}`)) {
+      return candidate;
+    }
+  }
+
+  return undefined;
+}
+
+export async function resolveReviewTarget(
+  repositoryPath: string
+): Promise<ReviewTarget | undefined> {
+  const reviewBranch = await detectReviewBranch(repositoryPath);
+  if (!reviewBranch) {
+    return undefined;
+  }
+
+  return {
+    reviewBranch,
+    approvedRef: getApprovedRef(reviewBranch)
+  };
+}
+
+export async function getBranchCommit(
+  repositoryPath: string,
+  reviewBranch: ReviewBranch
+): Promise<string> {
+  return resolveCommit(repositoryPath, reviewBranch);
 }
 
 export async function getApprovedCommit(
-  repositoryPath: string
+  repositoryPath: string,
+  approvedRef: string
 ): Promise<string> {
-  return resolveCommit(repositoryPath, APPROVED_REF);
+  return resolveCommit(repositoryPath, approvedRef);
 }
 
 export async function getCommitDetails(
@@ -191,7 +266,9 @@ function parseCommitLine(line: string): PendingCommit {
 }
 
 export async function listPendingCommits(
-  repositoryPath: string
+  repositoryPath: string,
+  approvedRef: string,
+  reviewBranch: ReviewBranch
 ): Promise<PendingCommit[]> {
   const output = await runGit(repositoryPath, [
     "log",
@@ -199,7 +276,7 @@ export async function listPendingCommits(
     "--decorate",
     "--date=short",
     "--pretty=format:%H%x09%h%x09%ad%x09%an%x09%s",
-    `${APPROVED_REF}..${REVIEW_BRANCH}`
+    `${approvedRef}..${reviewBranch}`
   ]);
 
   if (!output) {
@@ -209,8 +286,9 @@ export async function listPendingCommits(
   return output.split(/\r?\n/).map(parseCommitLine);
 }
 
-export async function listRecentMasterCommits(
+export async function listRecentBranchCommits(
   repositoryPath: string,
+  reviewBranch: ReviewBranch,
   limit = INITIAL_COMMIT_PREVIEW_COUNT
 ): Promise<PendingCommit[]> {
   const output = await runGit(repositoryPath, [
@@ -218,7 +296,7 @@ export async function listRecentMasterCommits(
     "--date=short",
     `--max-count=${limit}`,
     "--pretty=format:%H%x09%h%x09%ad%x09%an%x09%s",
-    REVIEW_BRANCH
+    reviewBranch
   ]);
 
   if (!output) {
@@ -324,22 +402,25 @@ export async function getCompactFileDiff(
 
 export async function updateApprovedRef(
   repositoryPath: string,
+  approvedRef: string,
   selectedCommit: string
 ): Promise<void> {
   await runGit(repositoryPath, [
     "update-ref",
-    APPROVED_REF,
+    approvedRef,
     selectedCommit
   ]);
 }
 
 export async function initializeApprovedRef(
-  repositoryPath: string
+  repositoryPath: string,
+  approvedRef: string,
+  reviewBranch: ReviewBranch
 ): Promise<void> {
   await runGit(repositoryPath, [
     "update-ref",
-    APPROVED_REF,
-    REVIEW_BRANCH
+    approvedRef,
+    reviewBranch
   ]);
 }
 

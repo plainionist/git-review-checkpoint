@@ -131,9 +131,12 @@ export class ReviewTreeDataProvider
       return items.length > 0
         ? items
         : [
-            new StaticTreeItem("Everything up to master is approved.", {
+            new StaticTreeItem(
+              `Everything up to ${this.state.reviewBranch ?? "the mainline branch"} is approved.`,
+              {
               iconId: "info"
-            })
+              }
+            )
           ];
     }
 

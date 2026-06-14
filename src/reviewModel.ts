@@ -1,18 +1,19 @@
 import {
-  APPROVED_REF,
   ChangedFile,
   GitCommandError,
   INITIAL_COMMIT_PREVIEW_COUNT,
   PendingCommit,
+  ReviewBranch,
   getCommitDetails,
+  getBranchCommit,
   getParentCommit,
-  getMasterCommit,
   getRepositoryRoot,
   getApprovedCommit,
   hasRef,
   listChangedFiles,
-  listRecentMasterCommits,
+  listRecentBranchCommits,
   listPendingCommits,
+  resolveReviewTarget,
   toShortHash
 } from "./git";
 
@@ -21,8 +22,10 @@ export type ReviewStateStatus = "ready" | "missing-checkpoint" | "error";
 export interface ReviewState {
   status: ReviewStateStatus;
   repositoryPath?: string;
-  masterCommit?: string;
-  masterShortHash?: string;
+  reviewBranch?: ReviewBranch;
+  approvedRef?: string;
+  branchCommit?: string;
+  branchShortHash?: string;
   approvedCommit?: string;
   approvedShortHash?: string;
   approvedEntry?: PendingCommit;
@@ -76,17 +79,23 @@ export async function loadReviewState(
     throw error;
   }
 
-  const hasMaster = await hasRef(repositoryPath, "refs/heads/master");
-  if (!hasMaster) {
-    return buildErrorState("No master branch found.");
+  const reviewTarget = await resolveReviewTarget(repositoryPath);
+  if (!reviewTarget) {
+    return buildErrorState("No supported mainline branch found. Expected main or master.");
   }
 
-  const masterCommit = await getMasterCommit(repositoryPath);
-  const masterShortHash = toShortHash(masterCommit);
+  const branchCommit = await getBranchCommit(
+    repositoryPath,
+    reviewTarget.reviewBranch
+  );
+  const branchShortHash = toShortHash(branchCommit);
 
-  const approvedRefExists = await hasRef(repositoryPath, APPROVED_REF);
+  const approvedRefExists = await hasRef(repositoryPath, reviewTarget.approvedRef);
   if (!approvedRefExists) {
-    const pendingCommits = await listRecentMasterCommits(repositoryPath);
+    const pendingCommits = await listRecentBranchCommits(
+      repositoryPath,
+      reviewTarget.reviewBranch
+    );
     const selectedCommit =
       pendingCommits.find((commit) => commit.hash === selectedCommitHash) ??
       pendingCommits[0];
@@ -105,8 +114,10 @@ export async function loadReviewState(
     return {
       status: "missing-checkpoint",
       repositoryPath,
-      masterCommit,
-      masterShortHash,
+      reviewBranch: reviewTarget.reviewBranch,
+      approvedRef: reviewTarget.approvedRef,
+      branchCommit,
+      branchShortHash,
       pendingCommits,
       selectedCommit,
       comparisonBaseRef,
@@ -118,20 +129,25 @@ export async function loadReviewState(
         selectedCommit && comparisonBaseRef
           ? `${comparisonBaseRef}..${selectedCommit.hash}`
           : undefined,
-      message: `No approved marker exists yet. Showing the latest ${INITIAL_COMMIT_PREVIEW_COUNT} commits on master.`
+      message: `No approved marker exists yet. Showing the latest ${INITIAL_COMMIT_PREVIEW_COUNT} commits on ${reviewTarget.reviewBranch}.`
     };
   }
 
   let approvedCommit: string;
   try {
-    approvedCommit = await getApprovedCommit(repositoryPath);
+    approvedCommit = await getApprovedCommit(
+      repositoryPath,
+      reviewTarget.approvedRef
+    );
   } catch (error) {
     if (isUnknownRevisionError(error)) {
       return {
         status: "error",
         repositoryPath,
-        masterCommit,
-        masterShortHash,
+        reviewBranch: reviewTarget.reviewBranch,
+        approvedRef: reviewTarget.approvedRef,
+        branchCommit,
+        branchShortHash,
         pendingCommits: [],
         changedFiles: [],
         message: "The approved marker points to an unknown commit."
@@ -143,7 +159,11 @@ export async function loadReviewState(
 
   const approvedShortHash = toShortHash(approvedCommit);
   const approvedEntry = await getCommitDetails(repositoryPath, approvedCommit);
-  const pendingCommits = await listPendingCommits(repositoryPath);
+  const pendingCommits = await listPendingCommits(
+    repositoryPath,
+    reviewTarget.approvedRef,
+    reviewTarget.reviewBranch
+  );
   const selectedCommit =
     pendingCommits.find((commit) => commit.hash === selectedCommitHash) ??
     pendingCommits[0];
@@ -154,8 +174,10 @@ export async function loadReviewState(
   return {
     status: "ready",
     repositoryPath,
-    masterCommit,
-    masterShortHash,
+    reviewBranch: reviewTarget.reviewBranch,
+    approvedRef: reviewTarget.approvedRef,
+    branchCommit,
+    branchShortHash,
     approvedCommit,
     approvedShortHash,
     approvedEntry,
@@ -167,7 +189,7 @@ export async function loadReviewState(
     reviewRange: selectedCommit ? `${approvedCommit}..${selectedCommit.hash}` : undefined,
     message:
       pendingCommits.length === 0
-        ? "Everything up to master is approved."
+        ? `Everything up to ${reviewTarget.reviewBranch} is approved.`
         : undefined
   };
 }
