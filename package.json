@@ -22,6 +22,7 @@
     "onCommand:reviewCheckpoint.showPendingCommits",
     "onCommand:reviewCheckpoint.showReviewDiff",
     "onCommand:reviewCheckpoint.openSideBySideDiff",
+    "onCommand:reviewCheckpoint.openInlineDiff",
     "onCommand:reviewCheckpoint.approveSelectedCommit"
   ],
   "main": "./out/extension.js",
@@ -67,6 +68,11 @@
       {
         "command": "reviewCheckpoint.openSideBySideDiff",
         "title": "Review Checkpoint: Open Side-by-Side Diff",
+        "category": "Review Checkpoint"
+      },
+      {
+        "command": "reviewCheckpoint.openInlineDiff",
+        "title": "Review Checkpoint: Open Inline Diff",
         "category": "Review Checkpoint"
       },
       {

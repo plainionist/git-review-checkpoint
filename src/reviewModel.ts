@@ -4,6 +4,7 @@ import {
   GitCommandError,
   INITIAL_COMMIT_PREVIEW_COUNT,
   PendingCommit,
+  getParentCommit,
   getMasterCommit,
   getRepositoryRoot,
   getApprovedCommit,
@@ -23,6 +24,8 @@ export interface ReviewState {
   masterShortHash?: string;
   approvedCommit?: string;
   approvedShortHash?: string;
+  comparisonBaseRef?: string;
+  comparisonBaseShortHash?: string;
   pendingCommits: PendingCommit[];
   selectedCommit?: PendingCommit;
   changedFiles: ChangedFile[];
@@ -85,6 +88,17 @@ export async function loadReviewState(
     const selectedCommit =
       pendingCommits.find((commit) => commit.hash === selectedCommitHash) ??
       pendingCommits[0];
+    const comparisonBaseRef = selectedCommit
+      ? await getParentCommit(repositoryPath, selectedCommit.hash)
+      : undefined;
+    const changedFiles =
+      selectedCommit && comparisonBaseRef
+        ? await listChangedFiles(
+            repositoryPath,
+            comparisonBaseRef,
+            selectedCommit.hash
+          )
+        : [];
 
     return {
       status: "missing-checkpoint",
@@ -93,7 +107,15 @@ export async function loadReviewState(
       masterShortHash,
       pendingCommits,
       selectedCommit,
-      changedFiles: [],
+      comparisonBaseRef,
+      comparisonBaseShortHash: comparisonBaseRef
+        ? toShortHash(comparisonBaseRef)
+        : undefined,
+      changedFiles,
+      reviewRange:
+        selectedCommit && comparisonBaseRef
+          ? `${comparisonBaseRef}..${selectedCommit.hash}`
+          : undefined,
       message: `No approved marker exists yet. Showing the latest ${INITIAL_COMMIT_PREVIEW_COUNT} commits on master.`
     };
   }
@@ -123,7 +145,7 @@ export async function loadReviewState(
     pendingCommits.find((commit) => commit.hash === selectedCommitHash) ??
     pendingCommits[0];
   const changedFiles = selectedCommit
-    ? await listChangedFiles(repositoryPath, selectedCommit.hash)
+    ? await listChangedFiles(repositoryPath, approvedCommit, selectedCommit.hash)
     : [];
 
   return {
@@ -133,12 +155,12 @@ export async function loadReviewState(
     masterShortHash,
     approvedCommit,
     approvedShortHash,
+    comparisonBaseRef: approvedCommit,
+    comparisonBaseShortHash: approvedShortHash,
     pendingCommits,
     selectedCommit,
     changedFiles,
-    reviewRange: selectedCommit
-      ? `${APPROVED_REF}..${selectedCommit.hash}`
-      : undefined,
+    reviewRange: selectedCommit ? `${approvedCommit}..${selectedCommit.hash}` : undefined,
     message:
       pendingCommits.length === 0
         ? "Everything up to master is approved."

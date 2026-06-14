@@ -22,11 +22,7 @@ import {
   ReviewContentProvider,
   createReviewFileUri
 } from "./reviewContentProvider";
-import {
-  ChangedFileTreeItem,
-  CommitTreeItem,
-  ReviewTreeDataProvider
-} from "./reviewView";
+import { CommitTreeItem, ReviewTreeDataProvider } from "./reviewView";
 import { ReviewState, loadReviewState } from "./reviewModel";
 
 interface GitExtensionExports {
@@ -62,7 +58,9 @@ class ReviewCheckpointController implements vscode.Disposable {
 
     this.diffWebview = new DiffWebviewController(
       context.extensionUri,
-      async (commitHash) => this.approveSelectedCommit(commitHash)
+      async (commitHash) => this.approveSelectedCommit(commitHash),
+      async () => this.openSideBySideDiff(),
+      async () => this.openInlineDiff()
     );
 
     this.disposables.push(this.treeView, this.diffWebview);
@@ -117,7 +115,13 @@ class ReviewCheckpointController implements vscode.Disposable {
       vscode.commands.registerCommand(
         "reviewCheckpoint.openSideBySideDiff",
         async (file?: ChangedFile) => {
-          await this.openSideBySideDiff(file);
+          await this.openFileDiff("sideBySide", file);
+        }
+      ),
+      vscode.commands.registerCommand(
+        "reviewCheckpoint.openInlineDiff",
+        async (file?: ChangedFile) => {
+          await this.openFileDiff("inline", file);
         }
       ),
       vscode.commands.registerCommand(
@@ -133,14 +137,21 @@ class ReviewCheckpointController implements vscode.Disposable {
         }
       ),
       vscode.commands.registerCommand(
-        "reviewCheckpoint.selectCommit",
+        "reviewCheckpoint.activateCommit",
         async (commitHash: string) => {
           if (this.selectedCommitHash === commitHash) {
+            if (this.provider.getState().status === "missing-checkpoint") {
+              await this.showReviewDiff();
+            }
             return;
           }
 
           this.selectedCommitHash = commitHash;
           await this.refresh({ showInitializationPrompt: false });
+
+          if (this.provider.getState().status === "missing-checkpoint") {
+            await this.showReviewDiff();
+          }
         }
       )
     );
@@ -185,7 +196,7 @@ class ReviewCheckpointController implements vscode.Disposable {
         changedFiles: [],
         message: "Review Checkpoint needs a single workspace folder."
       });
-      this.treeView.message = "Review Checkpoint needs a single workspace folder.";
+      this.treeView.message = undefined;
       return;
     }
 
@@ -193,7 +204,7 @@ class ReviewCheckpointController implements vscode.Disposable {
       const state = await loadReviewState(workspacePath, this.selectedCommitHash);
       this.selectedCommitHash = state.selectedCommit?.hash;
       this.provider.setState(state);
-      this.treeView.message = state.message;
+      this.treeView.message = undefined;
 
       if (
         options?.showInitializationPrompt !== false &&
@@ -219,7 +230,7 @@ class ReviewCheckpointController implements vscode.Disposable {
         changedFiles: [],
         message
       });
-      this.treeView.message = message;
+      this.treeView.message = undefined;
       vscode.window.showErrorMessage(message);
     }
   }
@@ -300,25 +311,59 @@ class ReviewCheckpointController implements vscode.Disposable {
     }
 
     const state = await this.getCurrentState();
-    if (state.status !== "ready" || !state.selectedCommit || !state.repositoryPath) {
+    if (
+      state.status === "error" ||
+      !state.selectedCommit ||
+      !state.repositoryPath
+    ) {
       vscode.window.showInformationMessage(
         state.message ?? "No selected commit is available."
       );
       return;
     }
 
+    if (!state.comparisonBaseRef) {
+      vscode.window.showInformationMessage(
+        "The selected commit has no previous commit to compare against."
+      );
+      return;
+    }
+
     const diff = await getCompactDiff(
       state.repositoryPath,
+      state.comparisonBaseRef,
       state.selectedCommit.hash
     );
     this.diffWebview.show(state, diff);
   }
 
   private async openSideBySideDiff(file?: ChangedFile): Promise<void> {
+    await this.openFileDiff("sideBySide", file);
+  }
+
+  private async openInlineDiff(file?: ChangedFile): Promise<void> {
+    await this.openFileDiff("inline", file);
+  }
+
+  private async openFileDiff(
+    mode: "sideBySide" | "inline",
+    file?: ChangedFile
+  ): Promise<void> {
     const state = await this.getCurrentState();
-    if (state.status !== "ready" || !state.selectedCommit || !state.repositoryPath) {
+    if (
+      state.status === "error" ||
+      !state.selectedCommit ||
+      !state.repositoryPath
+    ) {
       vscode.window.showInformationMessage(
         state.message ?? "No selected commit is available."
+      );
+      return;
+    }
+
+    if (!state.comparisonBaseRef) {
+      vscode.window.showInformationMessage(
+        "The selected commit has no previous commit to compare against."
       );
       return;
     }
@@ -339,7 +384,7 @@ class ReviewCheckpointController implements vscode.Disposable {
 
     const leftUri = createReviewFileUri(
       state.repositoryPath,
-      APPROVED_REF,
+      state.comparisonBaseRef,
       leftPath,
       changedFile.statusCode === "A"
     );
@@ -350,8 +395,21 @@ class ReviewCheckpointController implements vscode.Disposable {
       changedFile.statusCode === "D"
     );
 
-    const title = `${changedFile.displayPath} (${state.approvedShortHash ?? "base"} ↔ ${state.selectedCommit.shortHash})`;
+    const title = `${changedFile.displayPath} (${state.comparisonBaseShortHash ?? "base"} ↔ ${state.selectedCommit.shortHash})`;
     await vscode.commands.executeCommand("vscode.diff", leftUri, rightUri, title);
+
+    const rendersSideBySide = vscode.workspace
+      .getConfiguration("diffEditor")
+      .get<boolean>("renderSideBySide", true);
+    const shouldToggle =
+      (mode === "inline" && rendersSideBySide) ||
+      (mode === "sideBySide" && !rendersSideBySide);
+
+    if (shouldToggle) {
+      await vscode.commands.executeCommand(
+        "workbench.action.compareEditor.toggleInlineView"
+      );
+    }
   }
 
   private async pickChangedFile(state: ReviewState): Promise<ChangedFile | undefined> {

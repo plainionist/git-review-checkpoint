@@ -1,5 +1,4 @@
 import * as vscode from "vscode";
-import { APPROVED_REF } from "./git";
 import { ReviewState } from "./reviewModel";
 
 function escapeHtml(value: string): string {
@@ -78,7 +77,9 @@ export class DiffWebviewController implements vscode.Disposable {
 
   public constructor(
     private readonly extensionUri: vscode.Uri,
-    private readonly approveSelectedCommit: (commitHash: string) => Promise<void>
+    private readonly approveSelectedCommit: (commitHash: string) => Promise<void>,
+    private readonly openSideBySideDiff: () => Promise<void>,
+    private readonly openInlineDiff: () => Promise<void>
   ) {}
 
   public dispose(): void {
@@ -115,6 +116,10 @@ export class DiffWebviewController implements vscode.Disposable {
       this.panel.webview.onDidReceiveMessage(async (message: { command?: string; commitHash?: string }) => {
         if (message.command === "approve" && message.commitHash) {
           await this.approveSelectedCommit(message.commitHash);
+        } else if (message.command === "openSideBySideDiff") {
+          await this.openSideBySideDiff();
+        } else if (message.command === "openInlineDiff") {
+          await this.openInlineDiff();
         }
       }, undefined, this.disposables);
     } else {
@@ -135,6 +140,45 @@ export class DiffWebviewController implements vscode.Disposable {
     const stylesUri = this.panel.webview.asWebviewUri(
       vscode.Uri.joinPath(this.extensionUri, "resources", "review-checkpoint.svg")
     );
+
+    const comparisonSummary =
+      state.status === "missing-checkpoint"
+        ? state.comparisonBaseShortHash
+          ? `Diff to previous commit: ${escapeHtml(state.comparisonBaseShortHash)}`
+          : "No previous commit available."
+        : state.comparisonBaseShortHash
+          ? `Approved marker: ${escapeHtml(state.comparisonBaseShortHash)}`
+          : "Approved marker: missing";
+    const reviewRangeSummary = state.reviewRange
+      ? `<p>Review range: ${escapeHtml(state.reviewRange)}</p>`
+      : "";
+    const approveButton =
+      state.status === "ready"
+        ? '<button id="approve">Approve up to selected commit</button>'
+        : "";
+    const fileDiffButtons =
+      state.changedFiles.length > 0 && state.comparisonBaseRef
+        ? `<button id="openSideBySideDiff">Open side-by-side file diff</button>
+    <button id="openInlineDiff">Open inline file diff</button>`
+        : "";
+    const approveScript =
+      state.status === "ready"
+        ? `document.getElementById("approve")?.addEventListener("click", () => {
+      vscodeApi.postMessage({
+        command: "approve",
+        commitHash: ${JSON.stringify(selectedCommit.hash)}
+      });
+    });`
+        : "";
+    const fileDiffScript =
+      state.changedFiles.length > 0 && state.comparisonBaseRef
+        ? `document.getElementById("openSideBySideDiff")?.addEventListener("click", () => {
+      vscodeApi.postMessage({ command: "openSideBySideDiff" });
+    });
+    document.getElementById("openInlineDiff")?.addEventListener("click", () => {
+      vscodeApi.postMessage({ command: "openInlineDiff" });
+    });`
+        : "";
 
     return `<!DOCTYPE html>
 <html lang="en">
@@ -246,23 +290,20 @@ export class DiffWebviewController implements vscode.Disposable {
   <div class="toolbar">
     <div class="summary">
       <h1>${escapeHtml(selectedCommit.shortHash)} ${escapeHtml(selectedCommit.subject)}</h1>
-      <p>Approved marker: ${escapeHtml(state.approvedShortHash ?? "missing")}</p>
-      <p>Review range: ${escapeHtml(`${APPROVED_REF}..${selectedCommit.hash}`)}</p>
+      <p>${comparisonSummary}</p>
+      ${reviewRangeSummary}
       <p>Author: ${escapeHtml(selectedCommit.author)} • ${escapeHtml(selectedCommit.date)}</p>
     </div>
     <div class="spacer"></div>
-    <button id="approve">Approve up to selected commit</button>
+    ${fileDiffButtons}
+    ${approveButton}
   </div>
   <img class="icon" src="${stylesUri}" alt="">
   ${renderDiff(diff)}
   <script nonce="${scriptNonce}">
     const vscodeApi = acquireVsCodeApi();
-    document.getElementById("approve")?.addEventListener("click", () => {
-      vscodeApi.postMessage({
-        command: "approve",
-        commitHash: ${JSON.stringify(selectedCommit.hash)}
-      });
-    });
+    ${approveScript}
+    ${fileDiffScript}
   </script>
 </body>
 </html>`;

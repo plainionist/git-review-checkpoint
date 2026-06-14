@@ -140,6 +140,30 @@ export async function getApprovedCommit(
   return resolveCommit(repositoryPath, APPROVED_REF);
 }
 
+export async function getParentCommit(
+  repositoryPath: string,
+  commit: string
+): Promise<string | undefined> {
+  try {
+    return await runGit(repositoryPath, [
+      "rev-parse",
+      "--verify",
+      `${commit}^1`
+    ]);
+  } catch (error) {
+    if (
+      error instanceof GitCommandError &&
+      /unknown revision|needed a single revision|bad revision|ambiguous argument/i.test(
+        error.stderr
+      )
+    ) {
+      return undefined;
+    }
+
+    throw error;
+  }
+}
+
 function parseCommitLine(line: string): PendingCommit {
   const [hash, shortHash, date, author, ...subjectParts] = line.split("\t");
   return {
@@ -191,12 +215,13 @@ export async function listRecentMasterCommits(
 
 export async function listChangedFiles(
   repositoryPath: string,
+  baseRef: string,
   selectedCommit: string
 ): Promise<ChangedFile[]> {
   const output = await runGit(repositoryPath, [
     "diff",
     "--name-status",
-    `${APPROVED_REF}..${selectedCommit}`
+    `${baseRef}..${selectedCommit}`
   ]);
 
   if (!output) {
@@ -235,17 +260,19 @@ export async function listChangedFiles(
 
 export async function getDiff(
   repositoryPath: string,
+  baseRef: string,
   selectedCommit: string
 ): Promise<string> {
   return runGit(
     repositoryPath,
-    ["diff", "--find-renames", `${APPROVED_REF}..${selectedCommit}`],
+    ["diff", "--find-renames", `${baseRef}..${selectedCommit}`],
     { trim: false }
   );
 }
 
 export async function getCompactDiff(
   repositoryPath: string,
+  baseRef: string,
   selectedCommit: string
 ): Promise<string> {
   return runGit(
@@ -254,7 +281,7 @@ export async function getCompactDiff(
       "diff",
       "--find-renames",
       `--unified=${DIFF_CONTEXT_LINES}`,
-      `${APPROVED_REF}..${selectedCommit}`
+      `${baseRef}..${selectedCommit}`
     ],
     { trim: false }
   );
