@@ -5,10 +5,11 @@ import { ReviewState } from "./reviewModel";
 export class CommitTreeItem extends vscode.TreeItem {
   public constructor(
     public readonly commit: PendingCommit,
-    selected: boolean
+    selected: boolean,
+    contextValue = "pendingCommit"
   ) {
     super(`${commit.shortHash}  ${commit.subject}`, vscode.TreeItemCollapsibleState.None);
-    this.contextValue = "pendingCommit";
+    this.contextValue = contextValue;
     this.description = selected ? `${commit.date}  selected` : commit.date;
     this.iconPath = new vscode.ThemeIcon(selected ? "target" : "git-commit");
     this.tooltip = `${commit.hash}\n${commit.author} • ${commit.date}\n${commit.subject}`;
@@ -154,7 +155,8 @@ export class ReviewTreeDataProvider
             (commit) =>
               new CommitTreeItem(
                 commit,
-                this.state.selectedCommit?.hash === commit.hash
+                this.state.selectedCommit?.hash === commit.hash,
+                this.state.status === "ready" ? "pendingCommit" : "recentCommit"
               )
           )
         : [
@@ -167,7 +169,9 @@ export class ReviewTreeDataProvider
 
     items.push(
       new StaticTreeItem(
-        `Pending commits (${this.state.pendingCommits.length})`,
+        this.state.status === "missing-checkpoint"
+          ? `Latest master commits (${this.state.pendingCommits.length})`
+          : `Pending commits (${this.state.pendingCommits.length})`,
         commitChildren,
         { iconId: "history" }
       )
@@ -178,7 +182,9 @@ export class ReviewTreeDataProvider
         ? this.state.changedFiles.map((file) => new ChangedFileTreeItem(file))
         : [
             new StaticTreeItem(
-              this.state.pendingCommits.length > 0
+              this.state.status === "missing-checkpoint"
+                ? "Initialize Review Checkpoint to define a review range."
+                : this.state.pendingCommits.length > 0
                 ? "Select a pending commit to inspect changed files."
                 : this.state.message ?? "No changed files.",
               [],

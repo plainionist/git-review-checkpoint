@@ -2,12 +2,14 @@ import {
   APPROVED_REF,
   ChangedFile,
   GitCommandError,
+  INITIAL_COMMIT_PREVIEW_COUNT,
   PendingCommit,
   getMasterCommit,
   getRepositoryRoot,
   getApprovedCommit,
   hasRef,
   listChangedFiles,
+  listRecentMasterCommits,
   listPendingCommits,
   toShortHash
 } from "./git";
@@ -79,14 +81,20 @@ export async function loadReviewState(
 
   const approvedRefExists = await hasRef(repositoryPath, APPROVED_REF);
   if (!approvedRefExists) {
+    const pendingCommits = await listRecentMasterCommits(repositoryPath);
+    const selectedCommit =
+      pendingCommits.find((commit) => commit.hash === selectedCommitHash) ??
+      pendingCommits[0];
+
     return {
       status: "missing-checkpoint",
       repositoryPath,
       masterCommit,
       masterShortHash,
-      pendingCommits: [],
+      pendingCommits,
+      selectedCommit,
       changedFiles: [],
-      message: "No approved marker exists yet."
+      message: `No approved marker exists yet. Showing the latest ${INITIAL_COMMIT_PREVIEW_COUNT} commits on master.`
     };
   }
 

@@ -4,6 +4,10 @@
   "description": "A lightweight VS Code review board backed by a Git approved marker ref.",
   "version": "0.1.0",
   "publisher": "plainionist",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/plainionist/git-review-checkpoint.git"
+  },
   "license": "MIT",
   "engines": {
     "vscode": "^1.90.0"

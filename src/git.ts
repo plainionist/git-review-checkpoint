@@ -4,9 +4,10 @@ import { promisify } from "node:util";
 const execFileAsync = promisify(execFile);
 
 export const REVIEW_BRANCH = "master";
-export const APPROVED_REF = "refs/reviewed/master";
+export const APPROVED_REF = "refs/approved/master";
 export const POLL_INTERVAL_MS = 15_000;
 export const DIFF_CONTEXT_LINES = 3;
+export const INITIAL_COMMIT_PREVIEW_COUNT = 20;
 
 export interface PendingCommit {
   hash: string;
@@ -139,6 +140,17 @@ export async function getApprovedCommit(
   return resolveCommit(repositoryPath, APPROVED_REF);
 }
 
+function parseCommitLine(line: string): PendingCommit {
+  const [hash, shortHash, date, author, ...subjectParts] = line.split("\t");
+  return {
+    hash,
+    shortHash,
+    date,
+    author,
+    subject: subjectParts.join("\t")
+  };
+}
+
 export async function listPendingCommits(
   repositoryPath: string
 ): Promise<PendingCommit[]> {
@@ -155,16 +167,26 @@ export async function listPendingCommits(
     return [];
   }
 
-  return output.split(/\r?\n/).map((line) => {
-    const [hash, shortHash, date, author, ...subjectParts] = line.split("\t");
-    return {
-      hash,
-      shortHash,
-      date,
-      author,
-      subject: subjectParts.join("\t")
-    };
-  });
+  return output.split(/\r?\n/).map(parseCommitLine);
+}
+
+export async function listRecentMasterCommits(
+  repositoryPath: string,
+  limit = INITIAL_COMMIT_PREVIEW_COUNT
+): Promise<PendingCommit[]> {
+  const output = await runGit(repositoryPath, [
+    "log",
+    "--date=short",
+    `--max-count=${limit}`,
+    "--pretty=format:%H%x09%h%x09%ad%x09%an%x09%s",
+    REVIEW_BRANCH
+  ]);
+
+  if (!output) {
+    return [];
+  }
+
+  return output.split(/\r?\n/).map(parseCommitLine);
 }
 
 export async function listChangedFiles(

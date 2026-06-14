@@ -258,7 +258,7 @@ class ReviewCheckpointController implements vscode.Disposable {
 
   private async showPendingCommits(): Promise<void> {
     const state = await this.getCurrentState();
-    if (state.status !== "ready") {
+    if (state.status === "error") {
       vscode.window.showInformationMessage(
         state.message ?? "No pending commits are available."
       );
@@ -266,7 +266,11 @@ class ReviewCheckpointController implements vscode.Disposable {
     }
 
     if (state.pendingCommits.length === 0) {
-      vscode.window.showInformationMessage("Everything up to master is approved.");
+      vscode.window.showInformationMessage(
+        state.status === "missing-checkpoint"
+          ? "No commits were found on master."
+          : "Everything up to master is approved."
+      );
       return;
     }
 
