@@ -30,6 +30,13 @@ interface ParsedCompactFile {
   rows: ParsedCompactRow[];
 }
 
+interface FullDiffRow {
+  leftText: string;
+  rightText: string;
+  leftClass: "context" | "blank" | "delete";
+  rightClass: "context" | "blank" | "add";
+}
+
 function escapeHtml(value: string): string {
   return value
     .replace(/&/g, "&amp;")
@@ -172,18 +179,7 @@ function renderCompactSideBySide(diff: string): string {
 
   return files
     .map((file) => {
-      const rows = file.rows
-        .map((row) => {
-          if (row.kind === "hunk") {
-            return `<tr class="hunk-row"><td colspan="2">${escapeHtml(row.text ?? "")}</td></tr>`;
-          }
-
-          return `<tr>
-  <td class="${row.leftClass ?? "context"}">${escapeHtml(row.leftText ?? " ")}</td>
-  <td class="${row.rightClass ?? "context"}">${escapeHtml(row.rightText ?? " ")}</td>
-</tr>`;
-        })
-        .join("");
+      const rows = renderCompactRows(file.rows);
 
       return `<section class="file">
   <div class="file-title">${escapeHtml(file.title)}</div>
@@ -203,6 +199,317 @@ function renderCompactSideBySide(diff: string): string {
     .join("");
 }
 
+function renderCompactRows(rows: readonly ParsedCompactRow[]): string {
+  const htmlRows: string[] = [];
+  let index = 0;
+
+  while (index < rows.length) {
+    const row = rows[index];
+    if (row.kind === "hunk") {
+      htmlRows.push(`<tr class="hunk-row"><td colspan="2">${escapeHtml(row.text ?? "")}</td></tr>`);
+      index += 1;
+      continue;
+    }
+
+    if (isCompactDeleteOnlyRow(row)) {
+      const deleteRows: ParsedCompactRow[] = [];
+      while (index < rows.length && isCompactDeleteOnlyRow(rows[index])) {
+        deleteRows.push(rows[index]);
+        index += 1;
+      }
+
+      const addRows: ParsedCompactRow[] = [];
+      while (index < rows.length && isCompactAddOnlyRow(rows[index])) {
+        addRows.push(rows[index]);
+        index += 1;
+      }
+
+      if (addRows.length > 0) {
+        const pairCount = Math.max(deleteRows.length, addRows.length);
+        for (let pairIndex = 0; pairIndex < pairCount; pairIndex += 1) {
+          const deleteRow = deleteRows[pairIndex];
+          const addRow = addRows[pairIndex];
+          htmlRows.push(`<tr>
+  <td class="${deleteRow ? "delete" : "blank"}">${escapeHtml(deleteRow?.leftText ?? " ")}</td>
+  <td class="${addRow ? "add" : "blank"}">${escapeHtml(addRow?.rightText ?? " ")}</td>
+</tr>`);
+        }
+        continue;
+      }
+
+      for (const deleteRow of deleteRows) {
+        htmlRows.push(`<tr>
+  <td class="delete">${escapeHtml(deleteRow.leftText ?? " ")}</td>
+  <td class="blank"> </td>
+</tr>`);
+      }
+      continue;
+    }
+
+    htmlRows.push(`<tr>
+  <td class="${row.leftClass ?? "context"}">${escapeHtml(row.leftText ?? " ")}</td>
+  <td class="${row.rightClass ?? "context"}">${escapeHtml(row.rightText ?? " ")}</td>
+</tr>`);
+    index += 1;
+  }
+
+  return htmlRows.join("");
+}
+
+function isCompactDeleteOnlyRow(row: ParsedCompactRow): boolean {
+  return (
+    row.kind === "line" &&
+    row.leftClass === "delete" &&
+    row.rightClass === "blank"
+  );
+}
+
+function isCompactAddOnlyRow(row: ParsedCompactRow): boolean {
+  return (
+    row.kind === "line" &&
+    row.leftClass === "blank" &&
+    row.rightClass === "add"
+  );
+}
+
+const MAX_EXACT_DIFF_CELLS = 4_000_000;
+const HEURISTIC_LOOKAHEAD = 80;
+
+function buildAlignedFullRows(leftLines: string[], rightLines: string[]): FullDiffRow[] {
+  const totalCells = leftLines.length * rightLines.length;
+  if (totalCells <= MAX_EXACT_DIFF_CELLS) {
+    return coalesceReplacementRows(buildAlignedFullRowsExact(leftLines, rightLines));
+  }
+
+  return coalesceReplacementRows(buildAlignedFullRowsHeuristic(leftLines, rightLines));
+}
+
+function coalesceReplacementRows(rows: readonly FullDiffRow[]): FullDiffRow[] {
+  const result: FullDiffRow[] = [];
+
+  let index = 0;
+  while (index < rows.length) {
+    const row = rows[index];
+    if (!isDeleteOnlyRow(row)) {
+      result.push(row);
+      index += 1;
+      continue;
+    }
+
+    const deleteRows: FullDiffRow[] = [];
+    while (index < rows.length && isDeleteOnlyRow(rows[index])) {
+      deleteRows.push(rows[index]);
+      index += 1;
+    }
+
+    const addRows: FullDiffRow[] = [];
+    while (index < rows.length && isAddOnlyRow(rows[index])) {
+      addRows.push(rows[index]);
+      index += 1;
+    }
+
+    if (addRows.length === 0) {
+      result.push(...deleteRows);
+      continue;
+    }
+
+    const pairCount = Math.max(deleteRows.length, addRows.length);
+    for (let pairIndex = 0; pairIndex < pairCount; pairIndex += 1) {
+      const deleteRow = deleteRows[pairIndex];
+      const addRow = addRows[pairIndex];
+      result.push({
+        leftText: deleteRow?.leftText ?? "",
+        rightText: addRow?.rightText ?? "",
+        leftClass: deleteRow ? "delete" : "blank",
+        rightClass: addRow ? "add" : "blank"
+      });
+    }
+  }
+
+  return result;
+}
+
+function isDeleteOnlyRow(row: FullDiffRow): boolean {
+  return row.leftClass === "delete" && row.rightClass === "blank";
+}
+
+function isAddOnlyRow(row: FullDiffRow): boolean {
+  return row.leftClass === "blank" && row.rightClass === "add";
+}
+
+function buildAlignedFullRowsExact(leftLines: string[], rightLines: string[]): FullDiffRow[] {
+  const leftCount = leftLines.length;
+  const rightCount = rightLines.length;
+  const dp: number[][] = Array.from({ length: leftCount + 1 }, () =>
+    new Array<number>(rightCount + 1).fill(0)
+  );
+
+  for (let leftIndex = leftCount - 1; leftIndex >= 0; leftIndex -= 1) {
+    for (let rightIndex = rightCount - 1; rightIndex >= 0; rightIndex -= 1) {
+      if (leftLines[leftIndex] === rightLines[rightIndex]) {
+        dp[leftIndex][rightIndex] = dp[leftIndex + 1][rightIndex + 1] + 1;
+      } else {
+        dp[leftIndex][rightIndex] = Math.max(
+          dp[leftIndex + 1][rightIndex],
+          dp[leftIndex][rightIndex + 1]
+        );
+      }
+    }
+  }
+
+  const rows: FullDiffRow[] = [];
+  let leftIndex = 0;
+  let rightIndex = 0;
+
+  while (leftIndex < leftCount || rightIndex < rightCount) {
+    const leftLine = leftLines[leftIndex];
+    const rightLine = rightLines[rightIndex];
+
+    if (
+      leftIndex < leftCount &&
+      rightIndex < rightCount &&
+      leftLine === rightLine
+    ) {
+      rows.push({
+        leftText: leftLine,
+        rightText: rightLine,
+        leftClass: "context",
+        rightClass: "context"
+      });
+      leftIndex += 1;
+      rightIndex += 1;
+      continue;
+    }
+
+    if (
+      rightIndex >= rightCount ||
+      (leftIndex < leftCount &&
+        dp[leftIndex + 1][rightIndex] >= dp[leftIndex][rightIndex + 1])
+    ) {
+      rows.push({
+        leftText: leftLine ?? "",
+        rightText: "",
+        leftClass: "delete",
+        rightClass: "blank"
+      });
+      leftIndex += 1;
+      continue;
+    }
+
+    rows.push({
+      leftText: "",
+      rightText: rightLine ?? "",
+      leftClass: "blank",
+      rightClass: "add"
+    });
+    rightIndex += 1;
+  }
+
+  return rows;
+}
+
+function buildAlignedFullRowsHeuristic(leftLines: string[], rightLines: string[]): FullDiffRow[] {
+  const rows: FullDiffRow[] = [];
+  let leftIndex = 0;
+  let rightIndex = 0;
+
+  while (leftIndex < leftLines.length || rightIndex < rightLines.length) {
+    const leftLine = leftLines[leftIndex];
+    const rightLine = rightLines[rightIndex];
+
+    if (
+      leftIndex < leftLines.length &&
+      rightIndex < rightLines.length &&
+      leftLine === rightLine
+    ) {
+      rows.push({
+        leftText: leftLine,
+        rightText: rightLine,
+        leftClass: "context",
+        rightClass: "context"
+      });
+      leftIndex += 1;
+      rightIndex += 1;
+      continue;
+    }
+
+    const rightMatch =
+      leftIndex < leftLines.length
+        ? findLookaheadMatch(rightLines, rightIndex + 1, leftLine ?? "", HEURISTIC_LOOKAHEAD)
+        : -1;
+    const leftMatch =
+      rightIndex < rightLines.length
+        ? findLookaheadMatch(leftLines, leftIndex + 1, rightLine ?? "", HEURISTIC_LOOKAHEAD)
+        : -1;
+
+    if (
+      rightMatch !== -1 &&
+      (leftMatch === -1 || rightMatch - rightIndex <= leftMatch - leftIndex)
+    ) {
+      while (rightIndex < rightMatch) {
+        rows.push({
+          leftText: "",
+          rightText: rightLines[rightIndex],
+          leftClass: "blank",
+          rightClass: "add"
+        });
+        rightIndex += 1;
+      }
+      continue;
+    }
+
+    if (leftMatch !== -1) {
+      while (leftIndex < leftMatch) {
+        rows.push({
+          leftText: leftLines[leftIndex],
+          rightText: "",
+          leftClass: "delete",
+          rightClass: "blank"
+        });
+        leftIndex += 1;
+      }
+      continue;
+    }
+
+    if (leftIndex < leftLines.length) {
+      rows.push({
+        leftText: leftLines[leftIndex],
+        rightText: "",
+        leftClass: "delete",
+        rightClass: "blank"
+      });
+      leftIndex += 1;
+    }
+    if (rightIndex < rightLines.length) {
+      rows.push({
+        leftText: "",
+        rightText: rightLines[rightIndex],
+        leftClass: "blank",
+        rightClass: "add"
+      });
+      rightIndex += 1;
+    }
+  }
+
+  return rows;
+}
+
+function findLookaheadMatch(
+  lines: readonly string[],
+  startIndex: number,
+  needle: string,
+  lookahead: number
+): number {
+  const end = Math.min(lines.length, startIndex + lookahead);
+  for (let index = startIndex; index < end; index += 1) {
+    if (lines[index] === needle) {
+      return index;
+    }
+  }
+
+  return -1;
+}
+
 function renderFullSideBySide(files: readonly FullDiffFile[]): string {
   if (files.length === 0) {
     return `<div class="empty">No changed files in the selected review range.</div>`;
@@ -212,18 +519,14 @@ function renderFullSideBySide(files: readonly FullDiffFile[]): string {
     .map((file) => {
       const leftLines = file.leftContent.replace(/\r/g, "").split("\n");
       const rightLines = file.rightContent.replace(/\r/g, "").split("\n");
-      const rowCount = Math.max(leftLines.length, rightLines.length);
-      const rows: string[] = [];
-
-      for (let index = 0; index < rowCount; index += 1) {
-        const left = leftLines[index] ?? "";
-        const right = rightLines[index] ?? "";
-        const changed = left !== right;
-        rows.push(`<tr>
-  <td class="${changed ? "changed" : "context"}">${escapeHtml(left || " ")}</td>
-  <td class="${changed ? "changed" : "context"}">${escapeHtml(right || " ")}</td>
-</tr>`);
-      }
+      const rows = buildAlignedFullRows(leftLines, rightLines)
+        .map(
+          (row) => `<tr>
+  <td class="${row.leftClass}">${escapeHtml(row.leftText || " ")}</td>
+  <td class="${row.rightClass}">${escapeHtml(row.rightText || " ")}</td>
+</tr>`
+        )
+        .join("");
 
       return `<section class="file">
   <div class="file-title">${escapeHtml(file.displayPath)} <span class="status">${escapeHtml(file.status)}</span></div>
@@ -235,7 +538,7 @@ function renderFullSideBySide(files: readonly FullDiffFile[]): string {
       </tr>
     </thead>
     <tbody>
-      ${rows.join("")}
+      ${rows}
     </tbody>
   </table>
 </section>`;
@@ -535,8 +838,8 @@ export class DiffWebviewController implements vscode.Disposable {
     </div>
     <div class="actions">
       ${renderModeButton("mode-inline", "inline", "inline", content.mode)}
-      ${renderModeButton("mode-full", "side-by-side (full)", "sideBySideFull", content.mode)}
       ${renderModeButton("mode-compact", "side-by-side", "sideBySideCompact", content.mode)}
+      ${renderModeButton("mode-full", "side-by-side (full)", "sideBySideFull", content.mode)}
     </div>
   </div>
   <img class="icon" src="${iconUri}" alt="">
