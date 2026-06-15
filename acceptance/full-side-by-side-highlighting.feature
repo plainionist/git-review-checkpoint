@@ -101,3 +101,12 @@ Feature: Full side-by-side diff highlights only true changes
     And commit "9876abc" is currently not selected
     When I single-click commit "9876abc"
     Then the selected icon moves to commit "9876abc" immediately
+
+  Scenario: Diff pane opens immediately with spinner while loading
+    Given pending commits are visible in the Review Checkpoint tree
+    And commit "feed123" is currently not selected
+    And the Review Diff pane is closed
+    When I single-click commit "feed123"
+    Then the Review Diff pane opens immediately
+    And a circular loading indicator is shown
+    And when diff data is ready the loading indicator is replaced by the diff content

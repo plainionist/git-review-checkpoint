@@ -546,6 +546,13 @@ function renderFullSideBySide(files: readonly FullDiffFile[]): string {
     .join("");
 }
 
+function renderLoadingBody(): string {
+  return `<div class="loading-state" role="status" aria-live="polite" aria-label="Loading diff">
+  <div class="spinner" aria-hidden="true"></div>
+  <div class="loading-text">Loading diff...</div>
+</div>`;
+}
+
 function renderModeButton(
   id: string,
   label: string,
@@ -576,7 +583,31 @@ export class DiffWebviewController implements vscode.Disposable {
     this.panel?.dispose();
   }
 
+  public showLoading(state: ReviewState, mode: DiffRenderMode): void {
+    if (!state.selectedCommit) {
+      return;
+    }
+
+    this.ensurePanel(state);
+    this.panel!.webview.html = this.renderHtml(
+      state,
+      {
+        mode
+      },
+      true
+    );
+  }
+
   public show(state: ReviewState, content: ReviewDiffContent): void {
+    if (!state.selectedCommit) {
+      return;
+    }
+
+    this.ensurePanel(state);
+    this.panel!.webview.html = this.renderHtml(state, content, false);
+  }
+
+  private ensurePanel(state: ReviewState): void {
     if (!state.selectedCommit) {
       return;
     }
@@ -611,11 +642,13 @@ export class DiffWebviewController implements vscode.Disposable {
       this.panel.reveal(vscode.ViewColumn.Active);
       this.panel.title = `Review Diff: ${state.selectedCommit.shortHash}`;
     }
-
-    this.panel.webview.html = this.renderHtml(state, content);
   }
 
-  private renderHtml(state: ReviewState, content: ReviewDiffContent): string {
+  private renderHtml(
+    state: ReviewState,
+    content: ReviewDiffContent,
+    isLoading: boolean
+  ): string {
     const selectedCommit = state.selectedCommit;
     if (!selectedCommit || !this.panel) {
       return "";
@@ -643,8 +676,9 @@ export class DiffWebviewController implements vscode.Disposable {
         ? '<button type="button" class="approve" data-command="approve">Approve</button>'
         : "";
 
-    const body =
-      content.mode === "inline"
+    const body = isLoading
+      ? renderLoadingBody()
+      : content.mode === "inline"
         ? renderInlineDiff(content.diffText ?? "")
         : content.mode === "sideBySideCompact"
           ? renderCompactSideBySide(content.diffText ?? "")
@@ -779,6 +813,34 @@ export class DiffWebviewController implements vscode.Disposable {
       border: 1px solid var(--vscode-panel-border);
       border-radius: 6px;
       color: var(--vscode-descriptionForeground);
+    }
+    .loading-state {
+      min-height: 220px;
+      border: 1px solid var(--vscode-panel-border);
+      border-radius: 6px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      color: var(--vscode-descriptionForeground);
+      background: var(--vscode-editor-background);
+    }
+    .spinner {
+      width: 28px;
+      height: 28px;
+      border-radius: 50%;
+      border: 3px solid var(--vscode-progressBar-background, var(--vscode-descriptionForeground));
+      border-right-color: transparent;
+      animation: spin 0.75s linear infinite;
+    }
+    .loading-text {
+      font-size: 0.95rem;
+    }
+    @keyframes spin {
+      to {
+        transform: rotate(360deg);
+      }
     }
     .side-table {
       width: 100%;

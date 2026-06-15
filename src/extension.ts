@@ -206,8 +206,7 @@ class ReviewCheckpointController implements vscode.Disposable {
         async (commitHash: string) => {
           this.selectedCommitHash = commitHash;
           this.applyOptimisticSelection(commitHash);
-          await this.refresh({ showInitializationPrompt: false });
-          await this.showReviewDiff();
+          await this.showReviewDiff(commitHash);
         }
       )
     );
@@ -226,7 +225,7 @@ class ReviewCheckpointController implements vscode.Disposable {
           this.gitRefreshSubscription = undefined;
         }
       }),
-      this.treeView.onDidChangeSelection(async (event) => {
+      this.treeView.onDidChangeSelection((event) => {
         const selectedItem = event.selection[0];
         if (
           selectedItem instanceof CommitTreeItem &&
@@ -376,13 +375,27 @@ class ReviewCheckpointController implements vscode.Disposable {
     commitHash?: string,
     mode?: DiffRenderMode
   ): Promise<void> {
-    if (commitHash && commitHash !== this.selectedCommitHash) {
+    if (commitHash) {
       this.selectedCommitHash = commitHash;
-      await this.refresh({ showInitializationPrompt: false });
+      this.applyOptimisticSelection(commitHash);
     }
 
     if (mode) {
       this.diffRenderMode = mode;
+    }
+
+    const optimisticState = this.provider.getState();
+    if (
+      optimisticState.status !== "error" &&
+      optimisticState.selectedCommit &&
+      optimisticState.repositoryPath &&
+      optimisticState.comparisonBaseRef
+    ) {
+      this.diffWebview.showLoading(optimisticState, this.diffRenderMode);
+    }
+
+    if (commitHash) {
+      await this.refresh({ showInitializationPrompt: false });
     }
 
     const state = await this.getCurrentState();
@@ -403,6 +416,8 @@ class ReviewCheckpointController implements vscode.Disposable {
       );
       return;
     }
+
+    this.diffWebview.showLoading(state, this.diffRenderMode);
 
     const content = await this.buildReviewDiffContent(state);
     this.diffWebview.show(state, content);
