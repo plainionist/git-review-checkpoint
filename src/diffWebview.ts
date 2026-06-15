@@ -27,7 +27,6 @@ interface ParsedCompactRow {
 
 interface ParsedCompactFile {
   title: string;
-  metadata: string[];
   rows: ParsedCompactRow[];
 }
 
@@ -50,12 +49,6 @@ function renderInlineDiff(diff: string): string {
 
   return files
     .map((file) => {
-      const metadata = file.metadata.length > 0
-        ? `<div class="meta-block">${file.metadata
-            .map((line) => `<div>${escapeHtml(line)}</div>`)
-            .join("")}</div>`
-        : "";
-
       const lines = file.rows
         .map((row) => {
           if (row.kind === "hunk") {
@@ -76,7 +69,6 @@ function renderInlineDiff(diff: string): string {
 
       return `<section class="file">
   <div class="file-title">${escapeHtml(file.title)}</div>
-  ${metadata}
   <pre>${lines}</pre>
 </section>`;
     })
@@ -108,7 +100,6 @@ function parseCompactDiff(diff: string): ParsedCompactFile[] {
 
       current = {
         title,
-        metadata: [],
         rows: []
       };
       inHunk = false;
@@ -116,19 +107,6 @@ function parseCompactDiff(diff: string): ParsedCompactFile[] {
     }
 
     if (!current) {
-      continue;
-    }
-
-    if (
-      line.startsWith("index ") ||
-      line.startsWith("--- ") ||
-      line.startsWith("+++ ") ||
-      line.startsWith("rename from ") ||
-      line.startsWith("rename to ") ||
-      line.startsWith("new file mode ") ||
-      line.startsWith("deleted file mode ")
-    ) {
-      current.metadata.push(line);
       continue;
     }
 
@@ -194,12 +172,6 @@ function renderCompactSideBySide(diff: string): string {
 
   return files
     .map((file) => {
-      const metadata = file.metadata.length > 0
-        ? `<div class="meta-block">${file.metadata
-            .map((line) => `<div>${escapeHtml(line)}</div>`)
-            .join("")}</div>`
-        : "";
-
       const rows = file.rows
         .map((row) => {
           if (row.kind === "hunk") {
@@ -215,7 +187,6 @@ function renderCompactSideBySide(diff: string): string {
 
       return `<section class="file">
   <div class="file-title">${escapeHtml(file.title)}</div>
-  ${metadata}
   <table class="side-table">
     <thead>
       <tr>
@@ -467,11 +438,6 @@ export class DiffWebviewController implements vscode.Disposable {
       color: var(--vscode-descriptionForeground);
       font-weight: 400;
     }
-    .meta-block {
-      padding: 8px 12px;
-      color: var(--vscode-descriptionForeground);
-      border-top: 1px solid var(--vscode-panel-border);
-    }
     pre {
       margin: 0;
       padding: 0;
@@ -496,9 +462,6 @@ export class DiffWebviewController implements vscode.Disposable {
     .hunk {
       background: var(--vscode-diffEditor-diagonalFill);
       color: var(--vscode-editorInfo-foreground);
-    }
-    .path, .meta {
-      color: var(--vscode-descriptionForeground);
     }
     .add {
       background: var(--vscode-diffEditor-insertedLineBackground);
