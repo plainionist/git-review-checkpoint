@@ -25,7 +25,7 @@
     "onCommand:reviewCheckpoint.approveSelectedCommit"
   ],
   "main": "./out/extension.js",
-  "icon": "resources/extension-icon.svg",
+  "icon": "resources/extension-icon.png",
   "contributes": {
     "viewsContainers": {
       "activitybar": [
