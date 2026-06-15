@@ -2,7 +2,7 @@
   "name": "git-review-checkpoint",
   "displayName": "Git Review Checkpoint",
   "description": "A lightweight VS Code review board backed by a Git approved marker ref.",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "publisher": "plainionist",
   "repository": {
     "type": "git",
@@ -25,7 +25,7 @@
     "onCommand:reviewCheckpoint.approveSelectedCommit"
   ],
   "main": "./out/extension.js",
-  "icon": "resources/extension-icon.png",
+  "icon": "resources/extension-icon.svg",
   "contributes": {
     "viewsContainers": {
       "activitybar": [
