@@ -1,7 +1,7 @@
 Feature: Full side-by-side diff highlights only true changes
   As a reviewer
   I want side-by-side (full) mode to align unchanged lines
-  So I can see complete files without whole-file false highlights
+  So I can see complete files without whole-file false highlights and with clear file boundaries
 
   Scenario: Single-line insertion keeps unchanged lines neutral
     Given the approved base file content is:

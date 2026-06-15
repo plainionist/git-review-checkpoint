@@ -48,6 +48,14 @@ function nonce(): string {
   return Math.random().toString(36).slice(2);
 }
 
+function renderFileTitle(title: string, status?: string): string {
+  const statusMarkup = status
+    ? ` <span class="status">${escapeHtml(status)}</span>`
+    : "";
+
+  return `<div class="file-title">${escapeHtml(title)}${statusMarkup}</div>`;
+}
+
 function renderInlineDiff(diff: string): string {
   const files = parseCompactDiff(diff);
   if (files.length === 0) {
@@ -74,8 +82,8 @@ function renderInlineDiff(diff: string): string {
         })
         .join("");
 
-      return `<section class="file">
-  <div class="file-title">${escapeHtml(file.title)}</div>
+        return `<section class="file">
+      ${renderFileTitle(file.title)}
   <pre>${lines}</pre>
 </section>`;
     })
@@ -182,7 +190,7 @@ function renderCompactSideBySide(diff: string): string {
       const rows = renderCompactRows(file.rows);
 
       return `<section class="file">
-  <div class="file-title">${escapeHtml(file.title)}</div>
+  ${renderFileTitle(file.title)}
   <table class="side-table">
     <thead>
       <tr>
@@ -529,7 +537,7 @@ function renderFullSideBySide(files: readonly FullDiffFile[]): string {
         .join("");
 
       return `<section class="file">
-  <div class="file-title">${escapeHtml(file.displayPath)} <span class="status">${escapeHtml(file.status)}</span></div>
+  ${renderFileTitle(file.displayPath, file.status)}
   <table class="side-table full">
     <thead>
       <tr>
@@ -766,14 +774,21 @@ export class DiffWebviewController implements vscode.Disposable {
       border-radius: 6px;
       overflow: hidden;
     }
+    .file + .file {
+      margin-top: 24px;
+    }
     .file-title {
-      background: var(--vscode-editor-inactiveSelectionBackground);
-      padding: 10px 12px;
+      background: var(--vscode-editorInfo-background, var(--vscode-editor-inactiveSelectionBackground));
+      border-bottom: 1px solid var(--vscode-editorInfo-border, var(--vscode-panel-border));
+      padding: 14px 16px;
       font-weight: 600;
+      font-size: 1.05rem;
+      line-height: 1.35;
     }
     .status {
       color: var(--vscode-descriptionForeground);
       font-weight: 400;
+      font-size: 0.9rem;
     }
     pre {
       margin: 0;
