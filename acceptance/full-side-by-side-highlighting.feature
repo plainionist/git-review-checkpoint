@@ -80,3 +80,24 @@ Feature: Full side-by-side diff highlights only true changes
     Then line "before" is shown as unchanged on both sides
     And line "after" is shown as unchanged on both sides
     And line "old signature" is highlighted on the base side in the same row as line "new signature" on the selected side
+
+  Scenario: Single-click commit selection survives overlapping refreshes
+    Given pending commits are visible in the Review Checkpoint tree
+    And commit "abc1234" is currently not selected
+    When I single-click commit "abc1234"
+    And a background refresh started earlier finishes after this selection
+    Then commit "abc1234" remains selected in the tree
+
+  Scenario: First click updates diff for selected commit
+    Given pending commits are visible in the Review Checkpoint tree
+    And commit "def5678" is currently not selected
+    And the Review Diff view is open for another commit
+    When I single-click commit "def5678"
+    Then commit "def5678" becomes selected in the tree
+    And the Review Diff view updates to commit "def5678" without a second click
+
+  Scenario: First click moves selected icon immediately
+    Given pending commits are visible in the Review Checkpoint tree
+    And commit "9876abc" is currently not selected
+    When I single-click commit "9876abc"
+    Then the selected icon moves to commit "9876abc" immediately

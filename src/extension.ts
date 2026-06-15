@@ -111,6 +111,7 @@ class ReviewCheckpointController implements vscode.Disposable {
   private selectedCommitHash?: string;
   private diffRenderMode: DiffRenderMode = "inline";
   private diffCache?: ReviewDiffCache;
+  private refreshRequestVersion = 0;
 
   public constructor(private readonly context: vscode.ExtensionContext) {
     this.treeView = vscode.window.createTreeView("reviewCheckpointView", {
@@ -203,12 +204,8 @@ class ReviewCheckpointController implements vscode.Disposable {
       vscode.commands.registerCommand(
         "reviewCheckpoint.activateCommit",
         async (commitHash: string) => {
-          if (this.selectedCommitHash === commitHash) {
-            await this.showReviewDiff();
-            return;
-          }
-
           this.selectedCommitHash = commitHash;
+          this.applyOptimisticSelection(commitHash);
           await this.refresh({ showInitializationPrompt: false });
           await this.showReviewDiff();
         }
@@ -236,15 +233,35 @@ class ReviewCheckpointController implements vscode.Disposable {
           selectedItem.commit.hash !== this.selectedCommitHash
         ) {
           this.selectedCommitHash = selectedItem.commit.hash;
-          await this.refresh({ showInitializationPrompt: false });
+          this.applyOptimisticSelection(selectedItem.commit.hash);
         }
       })
     );
   }
 
+  private applyOptimisticSelection(commitHash: string): void {
+    const state = this.provider.getState();
+    if (state.status === "error") {
+      return;
+    }
+
+    const selectedCommit = state.pendingCommits.find(
+      (commit) => commit.hash === commitHash
+    );
+    if (!selectedCommit || state.selectedCommit?.hash === selectedCommit.hash) {
+      return;
+    }
+
+    this.provider.setState({
+      ...state,
+      selectedCommit
+    });
+  }
+
   public async refresh(options?: {
     showInitializationPrompt?: boolean;
   }): Promise<void> {
+    const requestVersion = ++this.refreshRequestVersion;
     const workspacePath = this.resolveWorkspacePath();
     if (!workspacePath) {
       this.provider.setState({
@@ -259,11 +276,19 @@ class ReviewCheckpointController implements vscode.Disposable {
 
     try {
       const state = await loadReviewState(workspacePath, this.selectedCommitHash);
+      if (requestVersion !== this.refreshRequestVersion) {
+        return;
+      }
+
       this.selectedCommitHash = state.selectedCommit?.hash;
       this.invalidateDiffCacheIfNeeded(state);
       this.provider.setState(state);
       this.treeView.message = undefined;
     } catch (error) {
+      if (requestVersion !== this.refreshRequestVersion) {
+        return;
+      }
+
       const message = this.toUserMessage(error);
       this.provider.setState({
         status: "error",
