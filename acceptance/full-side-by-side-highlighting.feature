@@ -110,3 +110,10 @@ Feature: Full side-by-side diff highlights only true changes
     Then the Review Diff pane opens immediately
     And a circular loading indicator is shown
     And when diff data is ready the loading indicator is replaced by the diff content
+
+  Scenario: New request cancels in-flight diff load
+    Given the Review Diff pane is loading a diff for commit "111aaaa"
+    When I click commit "222bbbb" before the first load completes
+    And I switch diff mode to "side-by-side"
+    Then the in-flight load for commit "111aaaa" is canceled
+    And only the latest request is rendered

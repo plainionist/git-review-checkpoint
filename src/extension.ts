@@ -112,6 +112,7 @@ class ReviewCheckpointController implements vscode.Disposable {
   private diffRenderMode: DiffRenderMode = "inline";
   private diffCache?: ReviewDiffCache;
   private refreshRequestVersion = 0;
+  private diffRequestVersion = 0;
 
   public constructor(private readonly context: vscode.ExtensionContext) {
     this.treeView = vscode.window.createTreeView("reviewCheckpointView", {
@@ -375,6 +376,8 @@ class ReviewCheckpointController implements vscode.Disposable {
     commitHash?: string,
     mode?: DiffRenderMode
   ): Promise<void> {
+    const requestVersion = ++this.diffRequestVersion;
+
     if (commitHash) {
       this.selectedCommitHash = commitHash;
       this.applyOptimisticSelection(commitHash);
@@ -383,6 +386,7 @@ class ReviewCheckpointController implements vscode.Disposable {
     if (mode) {
       this.diffRenderMode = mode;
     }
+    const requestedMode = this.diffRenderMode;
 
     const optimisticState = this.provider.getState();
     if (
@@ -391,14 +395,21 @@ class ReviewCheckpointController implements vscode.Disposable {
       optimisticState.repositoryPath &&
       optimisticState.comparisonBaseRef
     ) {
-      this.diffWebview.showLoading(optimisticState, this.diffRenderMode);
+      this.diffWebview.showLoading(optimisticState, requestedMode);
     }
 
     if (commitHash) {
       await this.refresh({ showInitializationPrompt: false });
+      if (requestVersion !== this.diffRequestVersion) {
+        return;
+      }
     }
 
     const state = await this.getCurrentState();
+    if (requestVersion !== this.diffRequestVersion) {
+      return;
+    }
+
     if (
       state.status === "error" ||
       !state.selectedCommit ||
@@ -417,9 +428,13 @@ class ReviewCheckpointController implements vscode.Disposable {
       return;
     }
 
-    this.diffWebview.showLoading(state, this.diffRenderMode);
+    this.diffWebview.showLoading(state, requestedMode);
 
-    const content = await this.buildReviewDiffContent(state);
+    const content = await this.buildReviewDiffContent(state, requestedMode);
+    if (requestVersion !== this.diffRequestVersion) {
+      return;
+    }
+
     this.diffWebview.show(state, content);
   }
 
@@ -599,24 +614,25 @@ class ReviewCheckpointController implements vscode.Disposable {
   }
 
   private async buildReviewDiffContent(
-    state: ReviewState
+    state: ReviewState,
+    mode: DiffRenderMode
   ): Promise<ReviewDiffContent> {
     if (!state.repositoryPath || !state.selectedCommit || !state.comparisonBaseRef) {
       return {
-        mode: this.diffRenderMode,
+        mode,
         diffText: ""
       };
     }
 
     const cache = this.getDiffCache(state);
 
-    if (this.diffRenderMode === "sideBySideFull") {
+    if (mode === "sideBySideFull") {
       if (!cache.fullFiles) {
         cache.fullFiles = await this.loadFullDiffFiles(state);
       }
 
       return {
-        mode: this.diffRenderMode,
+        mode,
         fullFiles: cache.fullFiles
       };
     }
@@ -630,7 +646,7 @@ class ReviewCheckpointController implements vscode.Disposable {
     }
 
     return {
-      mode: this.diffRenderMode,
+      mode,
       diffText: cache.compactDiff
     };
   }
