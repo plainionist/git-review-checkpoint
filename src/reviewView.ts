@@ -132,7 +132,7 @@ export class ReviewTreeDataProvider
         ? items
         : [
             new StaticTreeItem(
-              `Everything up to ${this.state.reviewBranch ?? "the mainline branch"} is approved.`,
+              "Everything in the timeline is approved.",
               {
               iconId: "info"
               }

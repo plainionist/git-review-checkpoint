@@ -267,23 +267,19 @@ function parseCommitLine(line: string): PendingCommit {
 
 export async function listPendingCommits(
   repositoryPath: string,
-  approvedRef: string,
-  reviewBranch: ReviewBranch
+  approvedRef: string
 ): Promise<PendingCommit[]> {
-  const output = await runGit(repositoryPath, [
-    "log",
-    "--oneline",
-    "--decorate",
-    "--date=short",
-    "--pretty=format:%H%x09%h%x09%ad%x09%an%x09%s",
-    `${approvedRef}..${reviewBranch}`
-  ]);
+  const orderedCommits = await listTimelineCommits(repositoryPath);
+  const approvedCommit = await resolveCommit(repositoryPath, approvedRef);
+  const approvedIndex = orderedCommits.findIndex(
+    (commit) => commit.hash === approvedCommit
+  );
 
-  if (!output) {
+  if (approvedIndex < 0) {
     return [];
   }
 
-  return output.split(/\r?\n/).map(parseCommitLine);
+  return orderedCommits.slice(0, approvedIndex);
 }
 
 export async function listRecentBranchCommits(
@@ -291,13 +287,27 @@ export async function listRecentBranchCommits(
   reviewBranch: ReviewBranch,
   limit = INITIAL_COMMIT_PREVIEW_COUNT
 ): Promise<PendingCommit[]> {
-  const output = await runGit(repositoryPath, [
+  void reviewBranch;
+  return listTimelineCommits(repositoryPath, limit);
+}
+
+export async function listTimelineCommits(
+  repositoryPath: string,
+  limit?: number
+): Promise<PendingCommit[]> {
+  const args = [
     "log",
+    "--all",
+    "--date-order",
     "--date=short",
-    `--max-count=${limit}`,
     "--pretty=format:%H%x09%h%x09%ad%x09%an%x09%s",
-    reviewBranch
-  ]);
+  ];
+
+  if (limit !== undefined) {
+    args.push(`--max-count=${limit}`);
+  }
+
+  const output = await runGit(repositoryPath, args);
 
   if (!output) {
     return [];

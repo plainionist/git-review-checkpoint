@@ -129,7 +129,7 @@ export async function loadReviewState(
         selectedCommit && comparisonBaseRef
           ? `${comparisonBaseRef}..${selectedCommit.hash}`
           : undefined,
-      message: `No approved marker exists yet. Showing the latest ${INITIAL_COMMIT_PREVIEW_COUNT} commits on ${reviewTarget.reviewBranch}.`
+      message: `No approved marker exists yet. Showing the latest ${INITIAL_COMMIT_PREVIEW_COUNT} commits across all branches.`
     };
   }
 
@@ -161,8 +161,7 @@ export async function loadReviewState(
   const approvedEntry = await getCommitDetails(repositoryPath, approvedCommit);
   const pendingCommits = await listPendingCommits(
     repositoryPath,
-    reviewTarget.approvedRef,
-    reviewTarget.reviewBranch
+    reviewTarget.approvedRef
   );
   const selectedCommit =
     pendingCommits.find((commit) => commit.hash === selectedCommitHash) ??
@@ -189,7 +188,7 @@ export async function loadReviewState(
     reviewRange: selectedCommit ? `${approvedCommit}..${selectedCommit.hash}` : undefined,
     message:
       pendingCommits.length === 0
-        ? `Everything up to ${reviewTarget.reviewBranch} is approved.`
+        ? "Everything in the timeline is approved."
         : undefined
   };
 }
