@@ -267,9 +267,10 @@ function parseCommitLine(line: string): PendingCommit {
 
 export async function listPendingCommits(
   repositoryPath: string,
-  approvedRef: string
+  approvedRef: string,
+  reviewBranch: ReviewBranch
 ): Promise<PendingCommit[]> {
-  const orderedCommits = await listTimelineCommits(repositoryPath);
+  const orderedCommits = await listTimelineCommits(repositoryPath, reviewBranch);
   const approvedCommit = await resolveCommit(repositoryPath, approvedRef);
   const approvedIndex = orderedCommits.findIndex(
     (commit) => commit.hash === approvedCommit
@@ -287,20 +288,20 @@ export async function listRecentBranchCommits(
   reviewBranch: ReviewBranch,
   limit = INITIAL_COMMIT_PREVIEW_COUNT
 ): Promise<PendingCommit[]> {
-  void reviewBranch;
-  return listTimelineCommits(repositoryPath, limit);
+  return listTimelineCommits(repositoryPath, reviewBranch, limit);
 }
 
 export async function listTimelineCommits(
   repositoryPath: string,
+  reviewBranch: ReviewBranch,
   limit?: number
 ): Promise<PendingCommit[]> {
   const args = [
     "log",
-    "--all",
     "--date-order",
     "--date=short",
     "--pretty=format:%H%x09%h%x09%ad%x09%an%x09%s",
+    reviewBranch
   ];
 
   if (limit !== undefined) {

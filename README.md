@@ -1,14 +1,14 @@
 # Git Review Checkpoint
 
-A small VS Code extension for reviewing changes on a flat commit timeline since the last approved checkpoint.
+A small VS Code extension for reviewing changes on a flat mainline-visible commit timeline since the last approved checkpoint.
 
 ## How it works
 
-- Mainline detection for initialization: `main` and `master`
+- Mainline detection: `main` and `master`
 - Approved marker ref: `refs/approved/<branch>`
-- Pending commits: commits newer than the approved marker in the global all-branches timeline (`git log --all --date-order`)
+- Pending commits: commits newer than the approved marker in the date-ordered timeline reachable from the detected mainline branch (`git log --date-order <mainline>`)
 
-When no approved marker exists yet, the pane shows the latest commits across all branches and lets you approve a selected commit to create the marker.
+When no approved marker exists yet, the pane shows the latest commits reachable from the detected mainline branch and lets you approve a selected commit to create the marker.
 
 ## UI
 

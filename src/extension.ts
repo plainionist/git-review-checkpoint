@@ -4,12 +4,14 @@ import {
   GitCommandError,
   PendingCommit,
   POLL_INTERVAL_MS,
+  ReviewBranch,
   ensureCommitExists,
   getCompactFileDiff,
   getCompactDiff,
   getRepositoryRoot,
   hasRef,
   initializeApprovedRef,
+  isAncestor,
   listPendingCommits,
   readFileAtRevision,
   toShortHash,
@@ -572,7 +574,11 @@ class ReviewCheckpointController implements vscode.Disposable {
     }
 
     if (state.status === "missing-checkpoint") {
-      await this.validateCommitExists(state.repositoryPath, targetCommitHash);
+      await this.validateCommitOnBranch(
+        state.repositoryPath,
+        state.reviewBranch,
+        targetCommitHash
+      );
       await updateApprovedRef(
         state.repositoryPath,
         state.approvedRef,
@@ -593,6 +599,7 @@ class ReviewCheckpointController implements vscode.Disposable {
 
     await this.validateApprovalTarget(
       state.repositoryPath,
+      state.reviewBranch,
       state.approvedRef,
       targetCommitHash
     );
@@ -712,8 +719,9 @@ class ReviewCheckpointController implements vscode.Disposable {
     ].join("|");
   }
 
-  private async validateCommitExists(
+  private async validateCommitOnBranch(
     repositoryPath: string,
+    reviewBranch: ReviewBranch,
     commitHash: string
   ): Promise<void> {
     const repositoryRoot = await getRepositoryRoot(repositoryPath);
@@ -721,10 +729,20 @@ class ReviewCheckpointController implements vscode.Disposable {
     if (!commitExists) {
       throw new Error("The selected commit no longer exists.");
     }
+
+    const reachableFromReviewBranch = await isAncestor(
+      repositoryRoot,
+      commitHash,
+      reviewBranch
+    );
+    if (!reachableFromReviewBranch) {
+      throw new Error(`The selected commit is not reachable from ${reviewBranch}.`);
+    }
   }
 
   private async validateApprovalTarget(
     repositoryPath: string,
+    reviewBranch: ReviewBranch,
     approvedRef: string,
     commitHash: string
   ): Promise<void> {
@@ -734,11 +752,12 @@ class ReviewCheckpointController implements vscode.Disposable {
       throw new Error("No approved marker exists yet.");
     }
 
-    await this.validateCommitExists(repositoryRoot, commitHash);
+    await this.validateCommitOnBranch(repositoryRoot, reviewBranch, commitHash);
 
     const pendingCommits = await listPendingCommits(
       repositoryRoot,
-      approvedRef
+      approvedRef,
+      reviewBranch
     );
     if (!pendingCommits.some((commit) => commit.hash === commitHash)) {
       throw new Error(

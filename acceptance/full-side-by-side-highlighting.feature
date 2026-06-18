@@ -118,11 +118,11 @@ Feature: Full side-by-side diff highlights only true changes
     Then the in-flight load for commit "111aaaa" is canceled
     And only the latest request is rendered
 
-  Scenario: Approving commit from another branch moves timeline checkpoint
-    Given an approved marker exists at commit "aaa1111"
-    And commit "bbb2222" is newer in the global timeline but is not reachable from the mainline branch tip
-    And commit "bbb2222" is visible in pending commits
-    When I select commit "bbb2222"
-    And I approve the selected commit
-    Then the approved marker points to commit "bbb2222"
-    And the pending commits list refreshes from that new timeline position
+  Scenario: Pending list shows only commits reachable from mainline
+    Given an approved marker exists on the mainline timeline
+    And commit "bbb2222" exists only on an unmerged feature branch
+    And commit "ccc3333" was authored on a feature branch and then merged into mainline
+    When I refresh the Review Checkpoint tree
+    Then commit "bbb2222" is not shown in pending commits
+    And commit "ccc3333" is shown in pending commits
+    And approving can only target commits reachable from the detected mainline branch
