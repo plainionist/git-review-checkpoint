@@ -10,7 +10,6 @@ import {
   getRepositoryRoot,
   getApprovedCommit,
   hasRef,
-  isAncestor,
   listChangedFiles,
   listRecentBranchCommits,
   listPendingCommits,
@@ -159,25 +158,6 @@ export async function loadReviewState(
   }
 
   const approvedShortHash = toShortHash(approvedCommit);
-  const approvedReachableFromReviewBranch = await isAncestor(
-    repositoryPath,
-    approvedCommit,
-    reviewTarget.reviewBranch
-  );
-  if (!approvedReachableFromReviewBranch) {
-    return {
-      status: "error",
-      repositoryPath,
-      reviewBranch: reviewTarget.reviewBranch,
-      approvedRef: reviewTarget.approvedRef,
-      branchCommit,
-      branchShortHash,
-      pendingCommits: [],
-      changedFiles: [],
-      message: `The approved marker is not reachable from ${reviewTarget.reviewBranch}.`
-    };
-  }
-
   const approvedEntry = await getCommitDetails(repositoryPath, approvedCommit);
   const pendingCommits = await listPendingCommits(
     repositoryPath,

@@ -270,17 +270,19 @@ export async function listPendingCommits(
   approvedRef: string,
   reviewBranch: ReviewBranch
 ): Promise<PendingCommit[]> {
-  const orderedCommits = await listTimelineCommits(repositoryPath, reviewBranch);
-  const approvedCommit = await resolveCommit(repositoryPath, approvedRef);
-  const approvedIndex = orderedCommits.findIndex(
-    (commit) => commit.hash === approvedCommit
-  );
+  const output = await runGit(repositoryPath, [
+    "log",
+    "--date-order",
+    "--date=short",
+    "--pretty=format:%H%x09%h%x09%ad%x09%an%x09%s",
+    `${approvedRef}..${reviewBranch}`
+  ]);
 
-  if (approvedIndex < 0) {
+  if (!output) {
     return [];
   }
 
-  return orderedCommits.slice(0, approvedIndex);
+  return output.split(/\r?\n/).map(parseCommitLine);
 }
 
 export async function listRecentBranchCommits(

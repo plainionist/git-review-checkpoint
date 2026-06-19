@@ -126,3 +126,9 @@ Feature: Full side-by-side diff highlights only true changes
     Then commit "bbb2222" is not shown in pending commits
     And commit "ccc3333" is shown in pending commits
     And approving can only target commits reachable from the detected mainline branch
+
+  Scenario: Approved marker outside mainline is supported
+    Given the approved marker points to commit "off9999" outside the detected mainline branch
+    When I refresh the Review Checkpoint tree
+    Then no error message about approved marker reachability is shown
+    And pending commits are computed from the range "approved marker .. detected mainline branch"
