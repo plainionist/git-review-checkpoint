@@ -110,6 +110,7 @@ class ReviewCheckpointController implements vscode.Disposable {
   private gitRefreshSubscription?: vscode.Disposable;
   private selectedCommitHash?: string;
   private diffRenderMode: DiffRenderMode = "inline";
+  private ignoreWhitespaceDiff = true;
   private diffCache?: ReviewDiffCache;
   private refreshRequestVersion = 0;
   private diffRequestVersion = 0;
@@ -126,6 +127,10 @@ class ReviewCheckpointController implements vscode.Disposable {
       async (mode) => {
         this.diffRenderMode = mode;
         await this.showReviewDiff(undefined, mode);
+      },
+      async (ignoreWhitespace) => {
+        this.ignoreWhitespaceDiff = ignoreWhitespace;
+        await this.showReviewDiff();
       }
     );
 
@@ -395,7 +400,11 @@ class ReviewCheckpointController implements vscode.Disposable {
       optimisticState.repositoryPath &&
       optimisticState.comparisonBaseRef
     ) {
-      this.diffWebview.showLoading(optimisticState, requestedMode);
+      this.diffWebview.showLoading(
+        optimisticState,
+        requestedMode,
+        this.ignoreWhitespaceDiff
+      );
     }
 
     if (commitHash) {
@@ -428,9 +437,13 @@ class ReviewCheckpointController implements vscode.Disposable {
       return;
     }
 
-    this.diffWebview.showLoading(state, requestedMode);
+    this.diffWebview.showLoading(state, requestedMode, this.ignoreWhitespaceDiff);
 
-    const content = await this.buildReviewDiffContent(state, requestedMode);
+    const content = await this.buildReviewDiffContent(
+      state,
+      requestedMode,
+      this.ignoreWhitespaceDiff
+    );
     if (requestVersion !== this.diffRequestVersion) {
       return;
     }
@@ -615,11 +628,13 @@ class ReviewCheckpointController implements vscode.Disposable {
 
   private async buildReviewDiffContent(
     state: ReviewState,
-    mode: DiffRenderMode
+    mode: DiffRenderMode,
+    ignoreWhitespace: boolean
   ): Promise<ReviewDiffContent> {
     if (!state.repositoryPath || !state.selectedCommit || !state.comparisonBaseRef) {
       return {
         mode,
+        ignoreWhitespace,
         diffText: ""
       };
     }
@@ -633,6 +648,7 @@ class ReviewCheckpointController implements vscode.Disposable {
 
       return {
         mode,
+        ignoreWhitespace,
         fullFiles: cache.fullFiles
       };
     }
@@ -641,12 +657,14 @@ class ReviewCheckpointController implements vscode.Disposable {
       cache.compactDiff = await getCompactDiff(
         state.repositoryPath,
         state.comparisonBaseRef,
-        state.selectedCommit.hash
+        state.selectedCommit.hash,
+        ignoreWhitespace
       );
     }
 
     return {
       mode,
+      ignoreWhitespace,
       diffText: cache.compactDiff
     };
   }
@@ -715,7 +733,8 @@ class ReviewCheckpointController implements vscode.Disposable {
       state.repositoryPath ?? "",
       state.comparisonBaseRef ?? "",
       state.selectedCommit?.hash ?? "",
-      String(state.changedFiles.length)
+      String(state.changedFiles.length),
+      String(this.ignoreWhitespaceDiff)
     ].join("|");
   }
 

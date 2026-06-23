@@ -379,13 +379,17 @@ export async function getDiff(
 export async function getCompactDiff(
   repositoryPath: string,
   baseRef: string,
-  selectedCommit: string
+  selectedCommit: string,
+  ignoreWhitespace = false
 ): Promise<string> {
+  const whitespaceArgs = ignoreWhitespace ? ["-w"] : [];
+
   return runGit(
     repositoryPath,
     [
       "diff",
       "--find-renames",
+      ...whitespaceArgs,
       `--unified=${DIFF_CONTEXT_LINES}`,
       `${baseRef}..${selectedCommit}`
     ],
@@ -397,13 +401,17 @@ export async function getCompactFileDiff(
   repositoryPath: string,
   baseRef: string,
   selectedCommit: string,
-  filePath: string
+  filePath: string,
+  ignoreWhitespace = false
 ): Promise<string> {
+  const whitespaceArgs = ignoreWhitespace ? ["-w"] : [];
+
   return runGit(
     repositoryPath,
     [
       "diff",
       "--find-renames",
+      ...whitespaceArgs,
       `--unified=${DIFF_CONTEXT_LINES}`,
       `${baseRef}..${selectedCommit}`,
       "--",

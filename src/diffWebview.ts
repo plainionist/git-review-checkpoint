@@ -12,6 +12,7 @@ export interface FullDiffFile {
 
 export interface ReviewDiffContent {
   mode: DiffRenderMode;
+  ignoreWhitespace: boolean;
   diffText?: string;
   fullFiles?: FullDiffFile[];
 }
@@ -283,13 +284,32 @@ function isCompactAddOnlyRow(row: ParsedCompactRow): boolean {
 const MAX_EXACT_DIFF_CELLS = 4_000_000;
 const HEURISTIC_LOOKAHEAD = 80;
 
-function buildAlignedFullRows(leftLines: string[], rightLines: string[]): FullDiffRow[] {
+function normalizeWhitespaceForCompare(line: string): string {
+  return line.replace(/\s+/g, "");
+}
+
+function buildAlignedFullRows(
+  leftLines: string[],
+  rightLines: string[],
+  ignoreWhitespace: boolean
+): FullDiffRow[] {
+  const leftKeys = ignoreWhitespace
+    ? leftLines.map(normalizeWhitespaceForCompare)
+    : leftLines;
+  const rightKeys = ignoreWhitespace
+    ? rightLines.map(normalizeWhitespaceForCompare)
+    : rightLines;
+
   const totalCells = leftLines.length * rightLines.length;
   if (totalCells <= MAX_EXACT_DIFF_CELLS) {
-    return coalesceReplacementRows(buildAlignedFullRowsExact(leftLines, rightLines));
+    return coalesceReplacementRows(
+      buildAlignedFullRowsExact(leftLines, rightLines, leftKeys, rightKeys)
+    );
   }
 
-  return coalesceReplacementRows(buildAlignedFullRowsHeuristic(leftLines, rightLines));
+  return coalesceReplacementRows(
+    buildAlignedFullRowsHeuristic(leftLines, rightLines, leftKeys, rightKeys)
+  );
 }
 
 function coalesceReplacementRows(rows: readonly FullDiffRow[]): FullDiffRow[] {
@@ -345,7 +365,12 @@ function isAddOnlyRow(row: FullDiffRow): boolean {
   return row.leftClass === "blank" && row.rightClass === "add";
 }
 
-function buildAlignedFullRowsExact(leftLines: string[], rightLines: string[]): FullDiffRow[] {
+function buildAlignedFullRowsExact(
+  leftLines: string[],
+  rightLines: string[],
+  leftKeys: readonly string[],
+  rightKeys: readonly string[]
+): FullDiffRow[] {
   const leftCount = leftLines.length;
   const rightCount = rightLines.length;
   const dp: number[][] = Array.from({ length: leftCount + 1 }, () =>
@@ -354,7 +379,7 @@ function buildAlignedFullRowsExact(leftLines: string[], rightLines: string[]): F
 
   for (let leftIndex = leftCount - 1; leftIndex >= 0; leftIndex -= 1) {
     for (let rightIndex = rightCount - 1; rightIndex >= 0; rightIndex -= 1) {
-      if (leftLines[leftIndex] === rightLines[rightIndex]) {
+      if (leftKeys[leftIndex] === rightKeys[rightIndex]) {
         dp[leftIndex][rightIndex] = dp[leftIndex + 1][rightIndex + 1] + 1;
       } else {
         dp[leftIndex][rightIndex] = Math.max(
@@ -372,11 +397,13 @@ function buildAlignedFullRowsExact(leftLines: string[], rightLines: string[]): F
   while (leftIndex < leftCount || rightIndex < rightCount) {
     const leftLine = leftLines[leftIndex];
     const rightLine = rightLines[rightIndex];
+    const leftKey = leftKeys[leftIndex];
+    const rightKey = rightKeys[rightIndex];
 
     if (
       leftIndex < leftCount &&
       rightIndex < rightCount &&
-      leftLine === rightLine
+      leftKey === rightKey
     ) {
       rows.push({
         leftText: leftLine,
@@ -416,7 +443,12 @@ function buildAlignedFullRowsExact(leftLines: string[], rightLines: string[]): F
   return rows;
 }
 
-function buildAlignedFullRowsHeuristic(leftLines: string[], rightLines: string[]): FullDiffRow[] {
+function buildAlignedFullRowsHeuristic(
+  leftLines: string[],
+  rightLines: string[],
+  leftKeys: readonly string[],
+  rightKeys: readonly string[]
+): FullDiffRow[] {
   const rows: FullDiffRow[] = [];
   let leftIndex = 0;
   let rightIndex = 0;
@@ -424,11 +456,13 @@ function buildAlignedFullRowsHeuristic(leftLines: string[], rightLines: string[]
   while (leftIndex < leftLines.length || rightIndex < rightLines.length) {
     const leftLine = leftLines[leftIndex];
     const rightLine = rightLines[rightIndex];
+    const leftKey = leftKeys[leftIndex];
+    const rightKey = rightKeys[rightIndex];
 
     if (
       leftIndex < leftLines.length &&
       rightIndex < rightLines.length &&
-      leftLine === rightLine
+      leftKey === rightKey
     ) {
       rows.push({
         leftText: leftLine,
@@ -443,11 +477,11 @@ function buildAlignedFullRowsHeuristic(leftLines: string[], rightLines: string[]
 
     const rightMatch =
       leftIndex < leftLines.length
-        ? findLookaheadMatch(rightLines, rightIndex + 1, leftLine ?? "", HEURISTIC_LOOKAHEAD)
+        ? findLookaheadMatch(rightKeys, rightIndex + 1, leftKey ?? "", HEURISTIC_LOOKAHEAD)
         : -1;
     const leftMatch =
       rightIndex < rightLines.length
-        ? findLookaheadMatch(leftLines, leftIndex + 1, rightLine ?? "", HEURISTIC_LOOKAHEAD)
+        ? findLookaheadMatch(leftKeys, leftIndex + 1, rightKey ?? "", HEURISTIC_LOOKAHEAD)
         : -1;
 
     if (
@@ -518,7 +552,10 @@ function findLookaheadMatch(
   return -1;
 }
 
-function renderFullSideBySide(files: readonly FullDiffFile[]): string {
+function renderFullSideBySide(
+  files: readonly FullDiffFile[],
+  ignoreWhitespace: boolean
+): string {
   if (files.length === 0) {
     return `<div class="empty">No changed files in the selected review range.</div>`;
   }
@@ -527,7 +564,7 @@ function renderFullSideBySide(files: readonly FullDiffFile[]): string {
     .map((file) => {
       const leftLines = file.leftContent.replace(/\r/g, "").split("\n");
       const rightLines = file.rightContent.replace(/\r/g, "").split("\n");
-      const rows = buildAlignedFullRows(leftLines, rightLines)
+      const rows = buildAlignedFullRows(leftLines, rightLines, ignoreWhitespace)
         .map(
           (row) => `<tr>
   <td class="${row.leftClass}">${escapeHtml(row.leftText || " ")}</td>
@@ -561,13 +598,9 @@ function renderLoadingBody(): string {
 </div>`;
 }
 
-function renderModeButton(
-  id: string,
-  label: string,
-  mode: DiffRenderMode,
-  activeMode: DiffRenderMode
-): string {
-  return `<button type="button" id="${id}" data-mode="${mode}" class="${mode === activeMode ? "active" : ""}">${label}</button>`;
+function renderModeOption(mode: DiffRenderMode, label: string, activeMode: DiffRenderMode): string {
+  const selected = mode === activeMode ? ' selected="selected"' : "";
+  return `<option value="${mode}"${selected}>${label}</option>`;
 }
 
 export class DiffWebviewController implements vscode.Disposable {
@@ -577,7 +610,8 @@ export class DiffWebviewController implements vscode.Disposable {
   public constructor(
     private readonly extensionUri: vscode.Uri,
     private readonly approveSelectedCommit: (commitHash: string) => Promise<void>,
-    private readonly setRenderMode: (mode: DiffRenderMode) => Promise<void>
+    private readonly setRenderMode: (mode: DiffRenderMode) => Promise<void>,
+    private readonly setIgnoreWhitespace: (ignoreWhitespace: boolean) => Promise<void>
   ) {}
 
   public dispose(): void {
@@ -591,7 +625,11 @@ export class DiffWebviewController implements vscode.Disposable {
     this.panel?.dispose();
   }
 
-  public showLoading(state: ReviewState, mode: DiffRenderMode): void {
+  public showLoading(
+    state: ReviewState,
+    mode: DiffRenderMode,
+    ignoreWhitespace: boolean
+  ): void {
     if (!state.selectedCommit) {
       return;
     }
@@ -600,7 +638,8 @@ export class DiffWebviewController implements vscode.Disposable {
     this.panel!.webview.html = this.renderHtml(
       state,
       {
-        mode
+        mode,
+        ignoreWhitespace
       },
       true
     );
@@ -636,11 +675,21 @@ export class DiffWebviewController implements vscode.Disposable {
       });
 
       this.panel.webview.onDidReceiveMessage(
-        async (message: { command?: string; commitHash?: string; mode?: DiffRenderMode }) => {
+        async (message: {
+          command?: string;
+          commitHash?: string;
+          mode?: DiffRenderMode;
+          ignoreWhitespace?: boolean;
+        }) => {
           if (message.command === "approve" && message.commitHash) {
             await this.approveSelectedCommit(message.commitHash);
           } else if (message.command === "setMode" && message.mode) {
             await this.setRenderMode(message.mode);
+          } else if (
+            message.command === "setIgnoreWhitespace" &&
+            typeof message.ignoreWhitespace === "boolean"
+          ) {
+            await this.setIgnoreWhitespace(message.ignoreWhitespace);
           }
         },
         undefined,
@@ -690,7 +739,7 @@ export class DiffWebviewController implements vscode.Disposable {
         ? renderInlineDiff(content.diffText ?? "")
         : content.mode === "sideBySideCompact"
           ? renderCompactSideBySide(content.diffText ?? "")
-          : renderFullSideBySide(content.fullFiles ?? []);
+          : renderFullSideBySide(content.fullFiles ?? [], content.ignoreWhitespace);
 
     return `<!DOCTYPE html>
 <html lang="en">
@@ -749,6 +798,28 @@ export class DiffWebviewController implements vscode.Disposable {
       align-items: center;
       gap: 6px;
       flex-wrap: wrap;
+    }
+    .toggle {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      color: var(--vscode-foreground);
+      font-size: 0.85rem;
+    }
+    .toggle input {
+      margin: 0;
+    }
+    select {
+      border: 1px solid var(--vscode-dropdown-border, var(--vscode-panel-border));
+      border-radius: 4px;
+      padding: 4px 8px;
+      color: var(--vscode-dropdown-foreground, var(--vscode-foreground));
+      background: var(--vscode-dropdown-background, var(--vscode-editor-background));
+      font-size: 0.85rem;
+    }
+    select:focus {
+      outline: 1px solid var(--vscode-focusBorder);
+      outline-offset: 0;
     }
     button {
       border: none;
@@ -914,15 +985,38 @@ export class DiffWebviewController implements vscode.Disposable {
       ${approveButton}
     </div>
     <div class="actions">
-      ${renderModeButton("mode-inline", "inline", "inline", content.mode)}
-      ${renderModeButton("mode-compact", "side-by-side", "sideBySideCompact", content.mode)}
-      ${renderModeButton("mode-full", "side-by-side (full)", "sideBySideFull", content.mode)}
+      <label class="toggle" for="ignore-whitespace">
+        <input type="checkbox" id="ignore-whitespace" ${content.ignoreWhitespace ? 'checked="checked"' : ""}>
+        <span>Ignore whitespaces</span>
+      </label>
+      <select id="diff-mode" aria-label="Diff mode">
+        ${renderModeOption("inline", "Inline", content.mode)}
+        ${renderModeOption("sideBySideCompact", "Side-by-side", content.mode)}
+        ${renderModeOption("sideBySideFull", "Side-by-side (full)", content.mode)}
+      </select>
     </div>
   </div>
   <img class="icon" src="${iconUri}" alt="">
   ${body}
   <script nonce="${scriptNonce}">
     const vscodeApi = acquireVsCodeApi();
+    const modeSelect = document.getElementById("diff-mode");
+    if (modeSelect instanceof HTMLSelectElement) {
+      modeSelect.addEventListener("change", () => {
+        vscodeApi.postMessage({ command: "setMode", mode: modeSelect.value });
+      });
+    }
+
+    const ignoreWhitespaceToggle = document.getElementById("ignore-whitespace");
+    if (ignoreWhitespaceToggle instanceof HTMLInputElement) {
+      ignoreWhitespaceToggle.addEventListener("change", () => {
+        vscodeApi.postMessage({
+          command: "setIgnoreWhitespace",
+          ignoreWhitespace: ignoreWhitespaceToggle.checked
+        });
+      });
+    }
+
     document.addEventListener("click", (event) => {
       const target = event.target;
       if (!(target instanceof HTMLElement)) {
@@ -935,15 +1029,12 @@ export class DiffWebviewController implements vscode.Disposable {
       }
 
       const command = button.dataset.command;
-      const mode = button.dataset.mode;
 
       if (command === "approve") {
         vscodeApi.postMessage({
           command: "approve",
           commitHash: ${JSON.stringify(selectedCommit.hash)}
         });
-      } else if (mode) {
-        vscodeApi.postMessage({ command: "setMode", mode });
       }
     });
   </script>

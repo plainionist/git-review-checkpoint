@@ -132,3 +132,13 @@ Feature: Full side-by-side diff highlights only true changes
     When I refresh the Review Checkpoint tree
     Then no error message about approved marker reachability is shown
     And pending commits are computed from the range "approved marker .. detected mainline branch"
+
+  Scenario: Review Diff toolbar supports ignore whitespaces and mode dropdown
+    Given whitespace-only changes exist in the selected review range
+    When I open Review Diff
+    Then an "Ignore whitespaces" toggle is visible before the diff mode selector
+    And the diff mode selector is a dropdown with options "Inline", "Side-by-side", and "Side-by-side (full)"
+    When I enable "Ignore whitespaces"
+    Then whitespace-only lines are not marked as changed in the diff
+    When I disable "Ignore whitespaces"
+    Then whitespace-only lines are marked as changed in the diff
