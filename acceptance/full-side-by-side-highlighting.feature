@@ -142,3 +142,75 @@ Feature: Full side-by-side diff highlights only true changes
     Then whitespace-only lines are not marked as changed in the diff
     When I disable "Ignore whitespaces"
     Then whitespace-only lines are marked as changed in the diff
+
+  Scenario: Intra-line highlighting in side-by-side (full) mode
+    Given the approved base file content is:
+      """
+      hello world
+      """
+    And the selected commit file content is:
+      """
+      hello there
+      """
+    When I open Review Diff in side-by-side (full) mode
+    Then the row for that line shows a lighter delete background on the base side
+    And the row for that line shows a lighter add background on the selected side
+    And the unchanged prefix "hello " is not highlighted more strongly on either side
+    And only the changed characters "world" are highlighted more strongly on the base side
+    And only the changed characters "there" are highlighted more strongly on the selected side
+
+  Scenario: Intra-line highlighting in side-by-side (compact) mode
+    Given the approved base file content is:
+      """
+      before
+      old value
+      after
+      """
+    And the selected commit file content is:
+      """
+      before
+      new value
+      after
+      """
+    When I open Review Diff in side-by-side mode
+    Then the replacement row shows a lighter delete background on the base side
+    And the replacement row shows a lighter add background on the selected side
+    And the unchanged text " value" is not highlighted more strongly on either side
+    And only the changed characters "old" are highlighted more strongly on the base side
+    And only the changed characters "new" are highlighted more strongly on the selected side
+
+  Scenario: Intra-line highlighting in inline mode
+    Given the approved base file content is:
+      """
+      foo bar baz
+      """
+    And the selected commit file content is:
+      """
+      foo qux baz
+      """
+    When I open Review Diff in inline mode
+    Then the deleted line shows a lighter delete background
+    And the added line shows a lighter add background
+    And the unchanged text "foo " and " baz" is not highlighted more strongly on the deleted line
+    And only the changed characters "bar" are highlighted more strongly on the deleted line
+    And only the changed characters "qux" are highlighted more strongly on the added line
+
+  Scenario: Pure insertion has no intra-line highlighting
+    Given the approved base file content is:
+      """
+      alpha
+      """
+    And the selected commit file content is:
+      """
+      alpha
+      brand new line
+      """
+    When I open Review Diff in side-by-side (full) mode
+    Then line "brand new line" is highlighted only on the selected side with no intra-line char spans
+
+  Scenario: Very long lines skip intra-line highlighting gracefully
+    Given the approved base file content contains a line longer than 500 characters
+    And the selected commit file content contains a similarly long but slightly different line
+    When I open Review Diff in side-by-side (full) mode
+    Then both long lines are shown with the line-level delete and add background
+    And no intra-line char spans are present on those lines

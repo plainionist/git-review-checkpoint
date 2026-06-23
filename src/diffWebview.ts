@@ -49,12 +49,164 @@ function nonce(): string {
   return Math.random().toString(36).slice(2);
 }
 
+// ----- Intra-line (character-level) diff helpers -----
+
+const MAX_INTRA_LINE_TOKENS = 500;
+
+interface CharSegment {
+  text: string;
+  highlight: boolean;
+}
+
+function tokenizeLine(line: string): string[] {
+  return line.match(/\w+|\W+/g) ?? [];
+}
+
+function computeIntraLineDiff(
+  left: string,
+  right: string
+): { leftSegs: CharSegment[]; rightSegs: CharSegment[] } {
+  if (!left || !right) {
+    return {
+      leftSegs: [{ text: left, highlight: false }],
+      rightSegs: [{ text: right, highlight: false }]
+    };
+  }
+
+  const leftTokens = tokenizeLine(left);
+  const rightTokens = tokenizeLine(right);
+
+  if (leftTokens.length > MAX_INTRA_LINE_TOKENS || rightTokens.length > MAX_INTRA_LINE_TOKENS) {
+    return {
+      leftSegs: [{ text: left, highlight: false }],
+      rightSegs: [{ text: right, highlight: false }]
+    };
+  }
+
+  const m = leftTokens.length;
+  const n = rightTokens.length;
+  const dp = Array.from({ length: m + 1 }, () =>
+    new Array<number>(n + 1).fill(0)
+  );
+
+  for (let i = m - 1; i >= 0; i -= 1) {
+    for (let j = n - 1; j >= 0; j -= 1) {
+      if (leftTokens[i] === rightTokens[j]) {
+        dp[i][j] = dp[i + 1][j + 1] + 1;
+      } else {
+        dp[i][j] = Math.max(dp[i + 1][j], dp[i][j + 1]);
+      }
+    }
+  }
+
+  const leftSegs: CharSegment[] = [];
+  const rightSegs: CharSegment[] = [];
+  let i = 0;
+  let j = 0;
+
+  while (i < m || j < n) {
+    if (i < m && j < n && leftTokens[i] === rightTokens[j]) {
+      appendCharSeg(leftSegs, leftTokens[i], false);
+      appendCharSeg(rightSegs, rightTokens[j], false);
+      i += 1;
+      j += 1;
+    } else if (j >= n || (i < m && dp[i + 1][j] >= dp[i][j + 1])) {
+      appendCharSeg(leftSegs, leftTokens[i], true);
+      i += 1;
+    } else {
+      appendCharSeg(rightSegs, rightTokens[j], true);
+      j += 1;
+    }
+  }
+
+  return { leftSegs, rightSegs };
+}
+
+function appendCharSeg(segs: CharSegment[], char: string, highlight: boolean): void {
+  if (segs.length > 0 && segs[segs.length - 1].highlight === highlight) {
+    segs[segs.length - 1].text += char;
+  } else {
+    segs.push({ text: char, highlight });
+  }
+}
+
+function renderSegments(segs: CharSegment[], highlightClass: string): string {
+  return segs
+    .map((seg) =>
+      seg.highlight
+        ? `<span class="${highlightClass}">${escapeHtml(seg.text)}</span>`
+        : escapeHtml(seg.text)
+    )
+    .join("");
+}
+
 function renderFileTitle(title: string, status?: string): string {
   const statusMarkup = status
     ? ` <span class="status">${escapeHtml(status)}</span>`
     : "";
 
   return `<div class="file-title">${escapeHtml(title)}${statusMarkup}</div>`;
+}
+
+function renderInlineRows(rows: readonly ParsedCompactRow[]): string {
+  const spans: string[] = [];
+  let index = 0;
+
+  while (index < rows.length) {
+    const row = rows[index];
+
+    if (row.kind === "hunk") {
+      spans.push(`<span class="line hunk">${escapeHtml(row.text ?? "")}</span>`);
+      index += 1;
+      continue;
+    }
+
+    if (row.leftClass === "delete") {
+      const deleteRows: ParsedCompactRow[] = [];
+      while (index < rows.length && rows[index].kind === "line" && rows[index].leftClass === "delete") {
+        deleteRows.push(rows[index]);
+        index += 1;
+      }
+
+      const addRows: ParsedCompactRow[] = [];
+      while (index < rows.length && rows[index].kind === "line" && rows[index].rightClass === "add") {
+        addRows.push(rows[index]);
+        index += 1;
+      }
+
+      for (let pairIndex = 0; pairIndex < deleteRows.length; pairIndex += 1) {
+        const deleteRow = deleteRows[pairIndex];
+        const addRow = addRows[pairIndex];
+        const deleteText = deleteRow.leftText ?? "";
+        const addText = addRow?.rightText ?? "";
+
+        if (addRow && deleteText && addText) {
+          const { leftSegs, rightSegs } = computeIntraLineDiff(deleteText, addText);
+          spans.push(`<span class="line delete">-${renderSegments(leftSegs, "delete-char")}</span>`);
+          spans.push(`<span class="line add">+${renderSegments(rightSegs, "add-char")}</span>`);
+        } else {
+          spans.push(`<span class="line delete">-${escapeHtml(deleteText)}</span>`);
+        }
+      }
+
+      for (let addIndex = deleteRows.length; addIndex < addRows.length; addIndex += 1) {
+        spans.push(`<span class="line add">+${escapeHtml(addRows[addIndex]?.rightText ?? "")}</span>`);
+      }
+
+      continue;
+    }
+
+    if (row.rightClass === "add") {
+      spans.push(`<span class="line add">+${escapeHtml(row.rightText ?? "")}</span>`);
+      index += 1;
+      continue;
+    }
+
+    spans.push(`<span class="line context"> ${escapeHtml(row.leftText ?? "")}</span>`);
+    index += 1;
+  }
+
+  return spans.join("");
 }
 
 function renderInlineDiff(diff: string): string {
@@ -65,23 +217,7 @@ function renderInlineDiff(diff: string): string {
 
   return files
     .map((file) => {
-      const lines = file.rows
-        .map((row) => {
-          if (row.kind === "hunk") {
-            return `<span class="line hunk">${escapeHtml(row.text ?? "")}</span>`;
-          }
-
-          if (row.leftClass === "delete") {
-            return `<span class="line delete">-${escapeHtml(row.leftText ?? "")}</span>`;
-          }
-
-          if (row.rightClass === "add") {
-            return `<span class="line add">+${escapeHtml(row.rightText ?? "")}</span>`;
-          }
-
-          return `<span class="line context"> ${escapeHtml(row.leftText ?? "")}</span>`;
-        })
-        .join("");
+      const lines = renderInlineRows(file.rows);
 
         return `<section class="file">
       ${renderFileTitle(file.title)}
@@ -238,9 +374,23 @@ function renderCompactRows(rows: readonly ParsedCompactRow[]): string {
         for (let pairIndex = 0; pairIndex < pairCount; pairIndex += 1) {
           const deleteRow = deleteRows[pairIndex];
           const addRow = addRows[pairIndex];
+          const leftText = deleteRow?.leftText ?? "";
+          const rightText = addRow?.rightText ?? "";
+
+          let leftContent: string;
+          let rightContent: string;
+          if (deleteRow && addRow && leftText && rightText) {
+            const { leftSegs, rightSegs } = computeIntraLineDiff(leftText, rightText);
+            leftContent = renderSegments(leftSegs, "delete-char") || " ";
+            rightContent = renderSegments(rightSegs, "add-char") || " ";
+          } else {
+            leftContent = escapeHtml(leftText || " ");
+            rightContent = escapeHtml(rightText || " ");
+          }
+
           htmlRows.push(`<tr>
-  <td class="${deleteRow ? "delete" : "blank"}">${escapeHtml(deleteRow?.leftText ?? " ")}</td>
-  <td class="${addRow ? "add" : "blank"}">${escapeHtml(addRow?.rightText ?? " ")}</td>
+  <td class="${deleteRow ? "delete" : "blank"}">${leftContent}</td>
+  <td class="${addRow ? "add" : "blank"}">${rightContent}</td>
 </tr>`);
         }
         continue;
@@ -565,12 +715,24 @@ function renderFullSideBySide(
       const leftLines = file.leftContent.replace(/\r/g, "").split("\n");
       const rightLines = file.rightContent.replace(/\r/g, "").split("\n");
       const rows = buildAlignedFullRows(leftLines, rightLines, ignoreWhitespace)
-        .map(
-          (row) => `<tr>
-  <td class="${row.leftClass}">${escapeHtml(row.leftText || " ")}</td>
-  <td class="${row.rightClass}">${escapeHtml(row.rightText || " ")}</td>
-</tr>`
-        )
+        .map((row) => {
+          let leftContent: string;
+          let rightContent: string;
+
+          if (row.leftClass === "delete" && row.rightClass === "add" && row.leftText && row.rightText) {
+            const { leftSegs, rightSegs } = computeIntraLineDiff(row.leftText, row.rightText);
+            leftContent = renderSegments(leftSegs, "delete-char") || " ";
+            rightContent = renderSegments(rightSegs, "add-char") || " ";
+          } else {
+            leftContent = escapeHtml(row.leftText || " ");
+            rightContent = escapeHtml(row.rightText || " ");
+          }
+
+          return `<tr>
+  <td class="${row.leftClass}">${leftContent}</td>
+  <td class="${row.rightClass}">${rightContent}</td>
+</tr>`;
+        })
         .join("");
 
       return `<section class="file">
@@ -755,6 +917,10 @@ export class DiffWebviewController implements vscode.Disposable {
   <style>
     :root {
       color-scheme: light dark;
+      --review-add-line-bg: color-mix(in srgb, var(--vscode-diffEditor-insertedLineBackground, rgba(0, 255, 0, 0.12)) 82%, transparent);
+      --review-delete-line-bg: color-mix(in srgb, var(--vscode-diffEditor-removedLineBackground, rgba(255, 0, 0, 0.12)) 82%, transparent);
+      --review-add-char-bg: color-mix(in srgb, var(--vscode-diffEditor-insertedTextBackground, rgba(0, 180, 0, 0.45)) 92%, transparent);
+      --review-delete-char-bg: color-mix(in srgb, var(--vscode-diffEditor-removedTextBackground, rgba(200, 0, 0, 0.45)) 92%, transparent);
     }
     body {
       font-family: var(--vscode-font-family);
@@ -887,11 +1053,11 @@ export class DiffWebviewController implements vscode.Disposable {
       color: var(--vscode-editorInfo-foreground);
     }
     .add {
-      background: var(--vscode-diffEditor-insertedLineBackground);
+      background: var(--review-add-line-bg);
       color: var(--vscode-diffEditor-insertedTextForeground, var(--vscode-foreground));
     }
     .delete {
-      background: var(--vscode-diffEditor-removedLineBackground);
+      background: var(--review-delete-line-bg);
       color: var(--vscode-diffEditor-removedTextForeground, var(--vscode-foreground));
     }
     .empty {
@@ -955,18 +1121,26 @@ export class DiffWebviewController implements vscode.Disposable {
       background: var(--vscode-editor-background);
     }
     .side-table td.changed {
-      background: var(--vscode-diffEditor-insertedLineBackground);
+      background: var(--review-add-line-bg);
     }
     .side-table td.add {
-      background: var(--vscode-diffEditor-insertedLineBackground);
+      background: var(--review-add-line-bg);
     }
     .side-table td.delete {
-      background: var(--vscode-diffEditor-removedLineBackground);
+      background: var(--review-delete-line-bg);
     }
     .hunk-row td {
       background: var(--vscode-diffEditor-diagonalFill);
       color: var(--vscode-editorInfo-foreground);
       font-weight: 600;
+    }
+    .delete-char {
+      background: var(--review-delete-char-bg);
+      border-radius: 1px;
+    }
+    .add-char {
+      background: var(--review-add-char-bg);
+      border-radius: 1px;
     }
     .icon {
       display: none;
