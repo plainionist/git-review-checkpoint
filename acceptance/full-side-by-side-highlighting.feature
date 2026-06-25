@@ -133,6 +133,15 @@ Feature: Full side-by-side diff highlights only true changes
     Then no error message about approved marker reachability is shown
     And pending commits are computed from the range "approved marker .. detected mainline branch"
 
+  Scenario: Approving merged feature commit keeps checkpoint stable
+    Given commit "feat1234" was authored on a feature branch and is reachable from the detected mainline branch
+    And commit "feat1234" is visible in pending commits
+    When I approve commit "feat1234"
+    And I refresh the Review Checkpoint tree
+    Then the approved marker remains at commit "feat1234"
+    And commit "feat1234" is no longer shown as pending
+    And pending commits still include only commits reachable from the detected mainline branch
+
   Scenario: Review Diff toolbar supports ignore whitespaces and mode dropdown
     Given whitespace-only changes exist in the selected review range
     When I open Review Diff

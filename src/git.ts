@@ -270,6 +270,25 @@ export async function listPendingCommits(
   approvedRef: string,
   reviewBranch: ReviewBranch
 ): Promise<PendingCommit[]> {
+  const approvedCommit = await resolveCommit(repositoryPath, approvedRef);
+  const timeline = await listTimelineCommits(repositoryPath, reviewBranch);
+  const approvedIndex = timeline.findIndex(
+    (commit) => commit.hash === approvedCommit
+  );
+
+  if (approvedIndex !== -1) {
+    return timeline.slice(0, approvedIndex);
+  }
+
+  // Fallback for approved markers outside the visible mainline timeline.
+  return listPendingCommitsByRange(repositoryPath, approvedRef, reviewBranch);
+}
+
+async function listPendingCommitsByRange(
+  repositoryPath: string,
+  approvedRef: string,
+  reviewBranch: ReviewBranch
+): Promise<PendingCommit[]> {
   const output = await runGit(repositoryPath, [
     "log",
     "--date-order",
