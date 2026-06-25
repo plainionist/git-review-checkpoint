@@ -131,6 +131,9 @@ class ReviewCheckpointController implements vscode.Disposable {
       async (ignoreWhitespace) => {
         this.ignoreWhitespaceDiff = ignoreWhitespace;
         await this.showReviewDiff();
+      },
+      async (filePath) => {
+        await this.openFileInEditor(filePath);
       }
     );
 
@@ -704,12 +707,80 @@ class ReviewCheckpointController implements vscode.Disposable {
 
         return {
           displayPath: changedFile.displayPath,
+          openPath: rightPath,
           status: changedFile.status,
           leftContent,
           rightContent
         };
       })
     );
+  }
+
+  private async openFileInEditor(filePath: string): Promise<void> {
+    const state = await this.getCurrentState();
+    if (
+      state.status === "error" ||
+      !state.repositoryPath ||
+      !state.selectedCommit
+    ) {
+      vscode.window.showInformationMessage(
+        state.message ?? "No selected commit is available."
+      );
+      return;
+    }
+
+    const normalizedPath = filePath.replace(/\\/g, "/");
+    const changedFile = state.changedFiles.find(
+      (file) =>
+        file.path === normalizedPath ||
+        file.newPath === normalizedPath ||
+        file.oldPath === normalizedPath
+    );
+
+    const workspaceFileUri = vscode.Uri.file(
+      `${state.repositoryPath}/${normalizedPath}`
+    );
+
+    if (await this.uriExists(workspaceFileUri)) {
+      const document = await vscode.workspace.openTextDocument(workspaceFileUri);
+      await vscode.window.showTextDocument(document, { preview: false });
+      return;
+    }
+
+    const pathFromRevision =
+      changedFile?.statusCode === "D"
+        ? changedFile.oldPath ?? changedFile.path
+        : changedFile?.newPath ?? changedFile?.path ?? normalizedPath;
+
+    const revision =
+      changedFile?.statusCode === "D"
+        ? state.comparisonBaseRef
+        : state.selectedCommit.hash;
+
+    if (!revision) {
+      vscode.window.showWarningMessage(
+        `Cannot open ${normalizedPath} for the selected review range.`
+      );
+      return;
+    }
+
+    const reviewUri = this.reviewContentProvider.createRevisionUri(
+      state.repositoryPath,
+      revision,
+      pathFromRevision,
+      false
+    );
+    const document = await vscode.workspace.openTextDocument(reviewUri);
+    await vscode.window.showTextDocument(document, { preview: false });
+  }
+
+  private async uriExists(uri: vscode.Uri): Promise<boolean> {
+    try {
+      await vscode.workspace.fs.stat(uri);
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   private getDiffCache(state: ReviewState): ReviewDiffCache {

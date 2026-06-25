@@ -5,6 +5,7 @@ export type DiffRenderMode = "inline" | "sideBySideCompact" | "sideBySideFull";
 
 export interface FullDiffFile {
   displayPath: string;
+  openPath: string;
   status: string;
   leftContent: string;
   rightContent: string;
@@ -28,6 +29,7 @@ interface ParsedCompactRow {
 
 interface ParsedCompactFile {
   title: string;
+  openPath?: string;
   rows: ParsedCompactRow[];
 }
 
@@ -43,6 +45,12 @@ function escapeHtml(value: string): string {
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;");
+}
+
+function escapeHtmlAttribute(value: string): string {
+  return escapeHtml(value)
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
 }
 
 function nonce(): string {
@@ -140,12 +148,15 @@ function renderSegments(segs: CharSegment[], highlightClass: string): string {
     .join("");
 }
 
-function renderFileTitle(title: string, status?: string): string {
+function renderFileTitle(title: string, status?: string, openPath?: string): string {
   const statusMarkup = status
     ? ` <span class="status">${escapeHtml(status)}</span>`
     : "";
+  const openButtonMarkup = `<button type="button" class="file-open" data-command="openFile"${
+    openPath ? ` data-path="${escapeHtmlAttribute(openPath)}"` : " disabled"
+  }>Open in Editor</button>`;
 
-  return `<div class="file-title">${escapeHtml(title)}${statusMarkup}</div>`;
+  return `<div class="file-title"><span>${escapeHtml(title)}${statusMarkup}</span>${openButtonMarkup}</div>`;
 }
 
 function renderInlineRows(rows: readonly ParsedCompactRow[]): string {
@@ -220,7 +231,7 @@ function renderInlineDiff(diff: string): string {
       const lines = renderInlineRows(file.rows);
 
         return `<section class="file">
-      ${renderFileTitle(file.title)}
+      ${renderFileTitle(file.title, undefined, file.openPath)}
   <pre>${lines}</pre>
 </section>`;
     })
@@ -252,6 +263,7 @@ function parseCompactDiff(diff: string): ParsedCompactFile[] {
 
       current = {
         title,
+        openPath: match?.[2],
         rows: []
       };
       inHunk = false;
@@ -327,7 +339,7 @@ function renderCompactSideBySide(diff: string): string {
       const rows = renderCompactRows(file.rows);
 
       return `<section class="file">
-  ${renderFileTitle(file.title)}
+  ${renderFileTitle(file.title, undefined, file.openPath)}
   <table class="side-table">
     <thead>
       <tr>
@@ -735,8 +747,8 @@ function renderFullSideBySide(
         })
         .join("");
 
-      return `<section class="file">
-  ${renderFileTitle(file.displayPath, file.status)}
+        return `<section class="file">
+      ${renderFileTitle(file.displayPath, file.status, file.openPath)}
   <table class="side-table full">
     <thead>
       <tr>
@@ -773,7 +785,8 @@ export class DiffWebviewController implements vscode.Disposable {
     private readonly extensionUri: vscode.Uri,
     private readonly approveSelectedCommit: (commitHash: string) => Promise<void>,
     private readonly setRenderMode: (mode: DiffRenderMode) => Promise<void>,
-    private readonly setIgnoreWhitespace: (ignoreWhitespace: boolean) => Promise<void>
+    private readonly setIgnoreWhitespace: (ignoreWhitespace: boolean) => Promise<void>,
+    private readonly openFileInEditor: (path: string) => Promise<void>
   ) {}
 
   public dispose(): void {
@@ -842,6 +855,7 @@ export class DiffWebviewController implements vscode.Disposable {
           commitHash?: string;
           mode?: DiffRenderMode;
           ignoreWhitespace?: boolean;
+          path?: string;
         }) => {
           if (message.command === "approve" && message.commitHash) {
             await this.approveSelectedCommit(message.commitHash);
@@ -852,6 +866,8 @@ export class DiffWebviewController implements vscode.Disposable {
             typeof message.ignoreWhitespace === "boolean"
           ) {
             await this.setIgnoreWhitespace(message.ignoreWhitespace);
+          } else if (message.command === "openFile" && message.path) {
+            await this.openFileInEditor(message.path);
           }
         },
         undefined,
@@ -1021,6 +1037,14 @@ export class DiffWebviewController implements vscode.Disposable {
       font-weight: 600;
       font-size: 1.05rem;
       line-height: 1.35;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+    .file-open {
+      padding: 2px 8px;
+      font-size: 0.8rem;
     }
     .status {
       color: var(--vscode-descriptionForeground);
@@ -1209,6 +1233,14 @@ export class DiffWebviewController implements vscode.Disposable {
           command: "approve",
           commitHash: ${JSON.stringify(selectedCommit.hash)}
         });
+      } else if (command === "openFile") {
+        const path = button.dataset.path;
+        if (path) {
+          vscodeApi.postMessage({
+            command: "openFile",
+            path
+          });
+        }
       }
     });
   </script>

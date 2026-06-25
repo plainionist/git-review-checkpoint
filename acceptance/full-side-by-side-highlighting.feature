@@ -195,6 +195,18 @@ Feature: Full side-by-side diff highlights only true changes
     And only the changed characters "bar" are highlighted more strongly on the deleted line
     And only the changed characters "qux" are highlighted more strongly on the added line
 
+  Scenario: Every file header includes Open in Editor action
+    Given pending commits are visible in the Review Checkpoint tree
+    And the selected review range contains multiple changed files
+    When I open Review Diff in inline mode
+    Then each file header shows an "Open in Editor" button
+    When I switch to side-by-side mode
+    Then each file header shows an "Open in Editor" button
+    When I switch to side-by-side (full) mode
+    Then each file header shows an "Open in Editor" button
+    When I click "Open in Editor" on file "src/example.ts"
+    Then file "src/example.ts" opens in the VS Code editor
+
   Scenario: Pure insertion has no intra-line highlighting
     Given the approved base file content is:
       """
